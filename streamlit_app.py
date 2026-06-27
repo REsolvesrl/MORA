@@ -8,30 +8,20 @@ from dateutil.relativedelta import relativedelta
 
 # Tassi legali ex art. 1284 c.c. (variano ogni 1° gennaio)
 TASSI_LEGALI = {
-    2005: 0.0250,   # 2,50%
-    2006: 0.0250,   # 2,50%
-    2007: 0.0250,   # 2,50%
-    2008: 0.0300,   # 3,00%
-    2009: 0.0300,   # 3,00%
-    2010: 0.0100,   # 1,00%
-    2011: 0.0150,   # 1,50%
-    2012: 0.0250,   # 2,50%
-    2013: 0.0250,   # 2,50%
-    2014: 0.0100,   # 1,00%
-    2015: 0.0050,   # 0,50%
-    2016: 0.0020,   # 0,20%
-    2017: 0.0010,   # 0,10%
-    2018: 0.0030,   # 0,30%
-    2019: 0.0080,   # 0,80%
-    2020: 0.0005,   # 0,05%
-    2021: 0.0001,   # 0,01%
-    2022: 0.0125,   # 1,25%
-    2023: 0.0500,   # 5,00%
-    2024: 0.0250,   # 2,50%
-    2025: 0.0200,   # 2,00%
-    2026: 0.0160,   # 1,60%
+    2005: 0.0250, 2006: 0.0250, 2007: 0.0250, 2008: 0.0300, 2009: 0.0300,
+    2010: 0.0100, 2011: 0.0150, 2012: 0.0250, 2013: 0.0250, 2014: 0.0100,
+    2015: 0.0050, 2016: 0.0020, 2017: 0.0010, 2018: 0.0030, 2019: 0.0080,
+    2020: 0.0005, 2021: 0.0001, 2022: 0.0125, 2023: 0.0500, 2024: 0.0250,
+    2025: 0.0200, 2026: 0.0160,
 }
 TASSO_LEGALE_DEFAULT = 0.0160  # fallback per anni non in tabella
+
+# Mappa frequenza -> mesi da sommare
+FREQUENZA_MESI = {
+    "Mensile": 1,
+    "Trimestrale": 3,
+    "Semestrale": 6,
+}
 
 
 # ==========================================================
@@ -75,6 +65,21 @@ def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
     return totale
 
 
+def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
+    """
+    Auto-genera le date delle rate scadute partendo dalla prima rata
+    e sommando i mesi (in base alla frequenza), fermandosi alla data_limite
+    (= Data Decadenza Effettiva). Il numero di rate è calcolato in automatico.
+    """
+    mesi = FREQUENZA_MESI[frequenza]
+    rate = []
+    cursore = data_prima_rata
+    while cursore < data_limite:
+        rate.append({"importo": importo_rata, "data_scadenza": cursore})
+        cursore = cursore + relativedelta(months=mesi)
+    return rate
+
+
 # ==========================================================
 # 3. CALCOLO ANNATE IPOTECARIE (Art. 2855 c.c.)
 # ==========================================================
@@ -96,12 +101,14 @@ def calcola_triennio(data_stipula, data_pignoramento):
 
 
 # ==========================================================
-# 4. RIPARTIZIONE IPOTECARIO / CHIROGRAFARIO
+# 4. RIPARTIZIONE IPOTECARIO / CHIROGRAFARIO (Art. 2855 c.c.)
+#    >>> CUORE UNICO DEL CALCOLO <<<
 # ==========================================================
 
 def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
                        data_stipula, data_pignoramento, data_fine):
     """
+    Filtro Art. 2855 c.c. applicato a una "voce" di interessi (rata o capitale).
     Divide gli interessi in:
     - PRE-TRIENNIO: chirografario @ tasso mora
     - TRIENNIO: ipotecario @ tasso mora
@@ -145,32 +152,46 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     return risultato
 
 
+def _accumula(totale, parziale, chiave_dettaglio):
+    """Helper: somma un risultato parziale nel totale e registra il dettaglio."""
+    totale["ipotecario"] += parziale["ipotecario"]
+    totale["chirografario"] += parziale["chirografario"]
+    totale["dettaglio"][chiave_dettaglio] = parziale["dettaglio"]
+    return totale
+
+
 # ==========================================================
-# 5. DOPPIO BINARIO DBT
+# 5. MOTORE UNIFICATO DI CALCOLO (CASO A e CASO B insieme)
 # ==========================================================
 
-def calcola_caso_A(capitale_residuo, tasso_mora, data_dbt, data_stipula,
-                   data_pignoramento, data_fine):
-    """CASO A: lettera DBT inviata. Mora su INTERO capitale residuo dalla data DBT."""
-    return ripartisci_credito(
-        capitale=capitale_residuo,
-        tasso_mora=tasso_mora,
-        data_inizio_mora=data_dbt,
-        data_stipula=data_stipula,
-        data_pignoramento=data_pignoramento,
-        data_fine=data_fine
-    )
-
-
-def calcola_caso_B(rate_scadute, tasso_mora, tasso_corrispettivo,
-                   capitale_a_scadere, data_stipula, data_pignoramento,
-                   data_fine):
+def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
+                           capitale_residuo, tasso_mora,
+                           data_decadenza_effettiva,
+                           data_stipula, data_pignoramento, data_fine):
     """
-    CASO B: nessuna lettera DBT, piano ancora in vigore.
-    - rate_scadute: lista di dict {"importo": x, "data_scadenza": date}
-    - capitale_a_scadere: solo interessi corrispettivi (no mora)
+    MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
+    L'unica differenza tra i due casi è 'data_decadenza_effettiva':
+        - CASO A -> Data Lettera DBT
+        - CASO B -> Data Notifica Precetto
+
+    FASE 1 (Rate): da 'data_prima_rata' a 'data_decadenza_effettiva'.
+        Mora su ogni singola rata, dalla sua scadenza fino alla decadenza.
+    FASE 2 (Capitale): da 'data_decadenza_effettiva' a 'data_fine'.
+        Mora sull'INTERO capitale residuo.
+
+    Entrambe le fasi passano per il filtro Art. 2855 c.c.
     """
     totale = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
+
+    # ---------- FASE 1: rate scadute fino alla decadenza ----------
+    rate_scadute = genera_rate_scadute(
+        importo_rata, data_prima_rata, frequenza, data_decadenza_effettiva
+    )
+
+    dettaglio_fase1 = {
+        "numero_rate_generate": len(rate_scadute),
+        "rate": {}
+    }
 
     for i, rata in enumerate(rate_scadute):
         rip = ripartisci_credito(
@@ -179,18 +200,26 @@ def calcola_caso_B(rate_scadute, tasso_mora, tasso_corrispettivo,
             data_inizio_mora=rata["data_scadenza"],
             data_stipula=data_stipula,
             data_pignoramento=data_pignoramento,
-            data_fine=data_fine
+            data_fine=data_decadenza_effettiva   # <-- la rata corre fino alla decadenza
         )
         totale["ipotecario"] += rip["ipotecario"]
         totale["chirografario"] += rip["chirografario"]
-        totale["dettaglio"][f"rata_{i+1}"] = rip["dettaglio"]
+        dettaglio_fase1["rate"][
+            f"rata_{i+1}_({rata['data_scadenza'].isoformat()})"
+        ] = rip["dettaglio"]
 
-    int_corrisp = interesse_semplice(
-        capitale_a_scadere, tasso_corrispettivo,
-        giorni_tra(data_pignoramento, data_fine)
+    totale["dettaglio"]["FASE_1_rate"] = dettaglio_fase1
+
+    # ---------- FASE 2: intero capitale residuo dalla decadenza ----------
+    rip_fase2 = ripartisci_credito(
+        capitale=capitale_residuo,
+        tasso_mora=tasso_mora,
+        data_inizio_mora=data_decadenza_effettiva,  # <-- parte dalla decadenza
+        data_stipula=data_stipula,
+        data_pignoramento=data_pignoramento,
+        data_fine=data_fine
     )
-    totale["ipotecario"] += int_corrisp
-    totale["dettaglio"]["corrispettivi_a_scadere"] = int_corrisp
+    totale = _accumula(totale, rip_fase2, "FASE_2_capitale_residuo")
 
     return totale
 
@@ -205,41 +234,89 @@ st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semp
 
 with st.sidebar:
     st.header("Parametri generali")
-    capitale = st.number_input("Capitale residuo (€)", min_value=0.0, value=100000.0, step=1000.0)
     tasso_mora = st.number_input("Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1) / 100
-    tasso_corr = st.number_input(
-        "Tasso corrispettivo / TAN (%)",
-        min_value=0.0, value=4.0, step=0.1,
-        help="Inserire il TAN da contratto, NON il TAEG."
-    ) / 100
 
     st.divider()
+    st.subheader("Date comuni")
     data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15))
     data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10))
-    data_dbt = st.date_input("Data Decadenza Beneficio Termine (DBT)", value=date(2022, 1, 20))
     data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today())
 
     st.divider()
-    ha_lettera_DBT = st.checkbox("È stata inviata la lettera di DBT?", value=True)
+    st.subheader("Evento di decadenza")
+    caso = st.radio(
+        "Quale atto ha generato la decadenza dal beneficio del termine?",
+        options=["CASO A – Lettera DBT", "CASO B – Notifica Precetto"],
+        index=0,
+    )
+    is_caso_A = caso.startswith("CASO A")
+
+# ---- Input comuni a entrambi i casi (corpo principale) ----
+st.subheader("📋 Dati del piano e del credito")
+c1, c2, c3 = st.columns(3)
+importo_rata = c1.number_input("Importo singola rata (€)", min_value=0.0,
+                               value=800.0, step=50.0)
+data_prima_rata = c2.date_input("Data scadenza PRIMA rata insoluta",
+                                value=date(2021, 3, 1))
+frequenza = c3.selectbox("Frequenza rate",
+                         options=list(FREQUENZA_MESI.keys()), index=0)
+
+c4, c5 = st.columns(2)
+capitale_residuo = c4.number_input("Capitale residuo (€)", min_value=0.0,
+                                   value=100000.0, step=1000.0)
+
+# ---- Campo dinamico in base al caso ----
+if is_caso_A:
+    data_decadenza_effettiva = c5.date_input(
+        "📩 Data Lettera DBT",
+        value=date(2022, 1, 20),
+        help="Data della comunicazione di decadenza dal beneficio del termine."
+    )
+else:
+    data_decadenza_effettiva = c5.date_input(
+        "📜 Data Notifica Precetto",
+        value=date(2023, 2, 1),
+        help="In assenza di DBT, la decadenza decorre dalla notifica del precetto."
+    )
 
 st.divider()
 
 if st.button("🧮 Calcola interessi di mora", type="primary"):
 
-    if ha_lettera_DBT:
-        st.subheader("Modalità: CASO A (Lettera DBT inviata)")
-        risultato = calcola_caso_A(
-            capitale, tasso_mora, data_dbt, data_stipula,
-            data_pignoramento, data_fine
-        )
-    else:
-        st.subheader("Modalità: CASO B (Piano ancora in vigore)")
-        st.info("⚠️ Inserire le rate scadute (interfaccia da collegare).")
-        rate_scadute = []  # TODO: input dinamico rate
-        risultato = calcola_caso_B(
-            rate_scadute, tasso_mora, tasso_corr,
-            capitale, data_stipula, data_pignoramento, data_fine
-        )
+    # --- Controlli di coerenza temporale ---
+    if data_decadenza_effettiva < data_prima_rata:
+        st.error("⛔ La data di decadenza è precedente alla prima rata insoluta. "
+                 "Verificare le date.")
+        st.stop()
+    if data_fine < data_decadenza_effettiva:
+        st.error("⛔ La data finale di calcolo è precedente alla decadenza. "
+                 "Verificare le date.")
+        st.stop()
+    if data_pignoramento < data_decadenza_effettiva:
+        st.warning("⚠️ Il pignoramento risulta precedente alla decadenza: "
+                   "di norma è successivo. Verificare.")
+
+    etichetta = "CASO A (Lettera DBT)" if is_caso_A else "CASO B (Notifica Precetto)"
+    st.subheader(f"Modalità: {etichetta}")
+    st.caption(f"Data Decadenza Effettiva utilizzata: "
+               f"**{data_decadenza_effettiva.isoformat()}**")
+
+    # --- MOTORE UNICO per entrambi i casi ---
+    risultato = calcola_mora_unificato(
+        importo_rata=importo_rata,
+        data_prima_rata=data_prima_rata,
+        frequenza=frequenza,
+        capitale_residuo=capitale_residuo,
+        tasso_mora=tasso_mora,
+        data_decadenza_effettiva=data_decadenza_effettiva,
+        data_stipula=data_stipula,
+        data_pignoramento=data_pignoramento,
+        data_fine=data_fine
+    )
+
+    # --- Riepilogo rate auto-generate ---
+    n_rate = risultato["dettaglio"]["FASE_1_rate"]["numero_rate_generate"]
+    st.info(f"🔢 Rate insolute auto-generate (prima rata → decadenza): **{n_rate}**")
 
     col1, col2 = st.columns(2)
     col1.metric("🏛️ Credito IPOTECARIO", f"€ {risultato['ipotecario']:,.2f}")
