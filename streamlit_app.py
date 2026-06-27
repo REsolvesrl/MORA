@@ -207,7 +207,11 @@ with st.sidebar:
     st.header("Parametri generali")
     capitale = st.number_input("Capitale residuo (€)", min_value=0.0, value=100000.0, step=1000.0)
     tasso_mora = st.number_input("Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1) / 100
-    tasso_corr = st.number_input("Tasso corrispettivo (%)", min_value=0.0, value=4.0, step=0.1) / 100
+    tasso_corr = st.number_input(
+        "Tasso corrispettivo / TAN (%)",
+        min_value=0.0, value=4.0, step=0.1,
+        help="Inserire il TAN da contratto, NON il TAEG."
+    ) / 100
 
     st.divider()
     data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15))
