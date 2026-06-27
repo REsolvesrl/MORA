@@ -1,75 +1,298 @@
 import streamlit as st
 from datetime import date
+from dateutil.relativedelta import relativedelta
 
-# Tabella dei tassi legali per anno (DA AGGIORNARE!)
+# ==========================================================
+# 1. TABELLE DI CONFIGURAZIONE
+# ==========================================================
+
+# Tassi legali ex art. 1284 c.c. (variano ogni 1° gennaio)
 TASSI_LEGALI = {
-    2020: 0.05, 2021: 0.01, 2022: 0.0125,
-    2023: 0.05, 2024: 0.025, 2025: 0.02, 2026: 0.02
+    2021: 0.0001,   # 0,01%
+    2022: 0.0125,   # 1,25%
+    2023: 0.0500,   # 5,00%
+    2024: 0.0250,   # 2,50%
+    2025: 0.0200,   # 2,00%
+    2026: 0.0160,   # 1,60%
+}
+TASSO_LEGALE_DEFAULT = 0.0160  # fallback per anni non in tabella
+
+# Tassi soglia usura (TEGM) -> DA COMPILARE con i valori ufficiali MEF
+# Struttura: (anno, trimestre): {"fisso": x, "variabile": y}
+TASSI_SOGLIA_USURA = {
+    # Esempio struttura - INSERIRE VALORI UFFICIALI DAI DECRETI MEF:
+    # (2023, 1): {"fisso": 0.0876, "variabile": 0.0825},
 }
 
-def calcola_mora(capitale, tasso_mora, data_inizio, data_pign, data_vendita, tasso_in_nota):
-    dettaglio = []
-    ipotecario = 0.0
-    chirografario = 0.0
 
-    # FASE A - Triennio ipotecario "pieno" (2 anni + anno in corso prima del pignoramento)
-    inizio_triennio = date(data_pign.year - 2, 1, 1)
-    if inizio_triennio < data_inizio:
-        inizio_triennio = data_inizio
+# ==========================================================
+# 2. FUNZIONI DI UTILITÀ TEMPORALE
+# ==========================================================
 
-    giorni_a = (data_pign - inizio_triennio).days
-    int_a = capitale * tasso_mora * giorni_a / 365
-    if tasso_in_nota:
-        ipotecario += int_a
-        dettaglio.append((f"Triennio ante-pignoramento ({inizio_triennio} → {data_pign})", "IPOTECARIO", round(int_a, 2)))
+def giorni_tra(d1, d2):
+    """Numero di giorni tra due date (d2 esclusa o inclusa a seconda logica)."""
+    return (d2 - d1).days
+
+
+def interesse_semplice(capitale, tasso_annuo, giorni, base_anno=365):
+    """
+    Calcolo interesse SEMPLICE (no anatocismo - art. 1283 c.c.).
+    Formula: C * i * (gg / base)
+    """
+    if giorni <= 0 or capitale <= 0:
+        return 0.0
+    return capitale * tasso_annuo * (giorni / base_anno)
+
+
+def tasso_legale_per_anno(anno):
+    """Restituisce il tasso legale vigente in un dato anno."""
+    return TASSI_LEGALI.get(anno, TASSO_LEGALE_DEFAULT)
+
+
+def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
+    """
+    Calcola interessi al tasso legale spezzando il periodo
+    ad ogni 1° gennaio (pro-rata temporis).
+    """
+    totale = 0.0
+    cursore = data_inizio
+    while cursore < data_fine:
+        # fine dell'anno corrente (31/12) o data_fine se prima
+        fine_anno = date(cursore.year, 12, 31)
+        segmento_fine = min(fine_anno, data_fine - relativedelta(days=-0))
+        if segmento_fine > data_fine:
+            segmento_fine = data_fine
+        # calcolo del segmento entro l'anno
+        prossimo_capodanno = date(cursore.year + 1, 1, 1)
+        fine_segmento = min(prossimo_capodanno, data_fine)
+        gg = giorni_tra(cursore, fine_segmento)
+        tasso = tasso_legale_per_anno(cursore.year)
+        totale += interesse_semplice(capitale, tasso, gg)
+        cursore = fine_segmento
+    return totale
+
+
+# ==========================================================
+# 3. CALCOLO ANNATE IPOTECARIE (Art. 2855 c.c.)
+# ==========================================================
+
+def calcola_triennio(data_stipula, data_pignoramento):
+    """
+    Individua l'annata ipotecaria in corso al pignoramento.
+    Le annate decorrono dal giorno/mese di stipula.
+    Restituisce (inizio_triennio, fine_annata_pignoramento).
+    """
+    # Trova l'anniversario di stipula <= data_pignoramento (inizio annata in corso)
+    anni_trascorsi = data_pignoramento.year - data_stipula.year
+    inizio_annata_corrente = data_stipula + relativedelta(years=anni_trascorsi)
+    if inizio_annata_corrente > data_pignoramento:
+        inizio_annata_corrente -= relativedelta(years=1)
+
+    fine_annata_corrente = inizio_annata_corrente + relativedelta(years=1)
+
+    # Il triennio = annata in corso + 2 precedenti
+    inizio_triennio = inizio_annata_corrente - relativedelta(years=2)
+
+    return inizio_triennio, inizio_annata_corrente, fine_annata_corrente
+
+
+# ==========================================================
+# 4. RIPARTIZIONE IPOTECARIO / CHIROGRAFARIO
+# ==========================================================
+
+def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
+                       data_stipula, data_pignoramento, data_fine):
+    """
+    Divide gli interessi in:
+    - PRE-TRIENNIO: chirografario @ tasso mora
+    - TRIENNIO: ipotecario @ tasso mora
+    - POST-TRIENNIO: ipotecario @ tasso legale + chirografario (differenza)
+    """
+    inizio_triennio, inizio_annata_pign, fine_annata_pign = calcola_triennio(
+        data_stipula, data_pignoramento
+    )
+
+    risultato = {
+        "ipotecario": 0.0,
+        "chirografario": 0.0,
+        "dettaglio": {}
+    }
+
+    # --- PRE-TRIENNIO (tutto chirografario @ mora) ---
+    if data_inizio_mora < inizio_triennio:
+        fine_pre = min(inizio_triennio, data_fine)
+        gg = giorni_tra(data_inizio_mora, fine_pre)
+        int_pre = interesse_semplice(capitale, tasso_mora, gg)
+        risultato["chirografario"] += int_pre
+        risultato["dettaglio"]["pre_triennio_chiro"] = int_pre
+
+    # --- TRIENNIO (ipotecario @ mora) ---
+    inizio_t = max(data_inizio_mora, inizio_triennio)
+    fine_t = min(fine_annata_pign, data_fine)
+    if fine_t > inizio_t:
+        gg = giorni_tra(inizio_t, fine_t)
+        int_triennio = interesse_semplice(capitale, tasso_mora, gg)
+        risultato["ipotecario"] += int_triennio
+        risultato["dettaglio"]["triennio_ipo_mora"] = int_triennio
+
+    # --- POST-TRIENNIO (ipotecario @ legale, chiro = differenza) ---
+    inizio_post = max(data_inizio_mora, fine_annata_pign)
+    if data_fine > inizio_post:
+        # interessi al tasso legale (pro-rata) -> IPOTECARIO
+        int_legale = interesse_legale_pro_rata(capitale, inizio_post, data_fine)
+        # interessi al tasso di mora (per calcolare la differenza)
+        gg = giorni_tra(inizio_post, data_fine)
+        int_mora_post = interesse_semplice(capitale, tasso_mora, gg)
+
+        risultato["ipotecario"] += int_legale
+        risultato["chirografario"] += (int_mora_post - int_legale)
+        risultato["dettaglio"]["post_ipo_legale"] = int_legale
+        risultato["dettaglio"]["post_chiro_diff"] = int_mora_post - int_legale
+
+    return risultato
+
+
+# ==========================================================
+# 5. DOPPIO BINARIO DBT
+# ==========================================================
+
+def calcola_caso_A(capitale_residuo, tasso_mora, data_dbt, data_stipula,
+                   data_pignoramento, data_fine):
+    """
+    CASO A: lettera DBT inviata.
+    Mora su INTERO capitale residuo dalla data DBT.
+    """
+    return ripartisci_credito(
+        capitale=capitale_residuo,
+        tasso_mora=tasso_mora,
+        data_inizio_mora=data_dbt,
+        data_stipula=data_stipula,
+        data_pignoramento=data_pignoramento,
+        data_fine=data_fine
+    )
+
+
+def calcola_caso_B(rate_scadute, tasso_mora, tasso_corrispettivo,
+                   capitale_a_scadere, data_stipula, data_pignoramento,
+                   data_fine):
+    """
+    CASO B: nessuna lettera DBT, piano ancora in vigore.
+    - rate_scadute: lista di dict {"importo": x, "data_scadenza": date}
+      -> mora su ogni singola rata dalla sua scadenza
+    - capitale_a_scadere: solo interessi corrispettivi (no mora)
+    """
+    totale = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
+
+    # Mora sulle singole rate scadute
+    for i, rata in enumerate(rate_scadute):
+        rip = ripartisci_credito(
+            capitale=rata["importo"],
+            tasso_mora=tasso_mora,
+            data_inizio_mora=rata["data_scadenza"],
+            data_stipula=data_stipula,
+            data_pignoramento=data_pignoramento,
+            data_fine=data_fine
+        )
+        totale["ipotecario"] += rip["ipotecario"]
+        totale["chirografario"] += rip["chirografario"]
+        totale["dettaglio"][f"rata_{i+1}"] = rip["dettaglio"]
+
+    # Capitale a scadere -> solo corrispettivi (semplificazione: ipotecario)
+    # NB: i corrispettivi seguono comunque la regola del triennio sull'ipoteca
+    int_corrisp = interesse_semplice(
+        capitale_a_scadere, tasso_corrispettivo,
+        giorni_tra(data_pignoramento, data_fine)
+    )
+    totale["ipotecario"] += int_corrisp
+    totale["dettaglio"]["corrispettivi_a_scadere"] = int_corrisp
+
+    return totale
+
+
+# ==========================================================
+# 6. CONTROLLO USURA
+# ==========================================================
+
+def verifica_usura(tasso_mora, data_stipula):
+    """
+    Confronta il tasso di mora con il tasso soglia usura
+    vigente alla data di stipula. Restituisce (bool_supera, messaggio).
+    """
+    trimestre = (data_stipula.month - 1) // 3 + 1
+    chiave = (data_stipula.year, trimestre)
+    soglia = TASSI_SOGLIA_USURA.get(chiave)
+
+    if soglia is None:
+        return None, ("⚠️ Tasso soglia usura non disponibile in tabella per "
+                      f"{data_stipula.year} T{trimestre}. Verificare manualmente.")
+
+    soglia_max = max(soglia.values())
+    if tasso_mora > soglia_max:
+        return True, ("🚨 ATTENZIONE: possibile usura originaria. "
+                      f"Tasso mora {tasso_mora*100:.2f}% > soglia {soglia_max*100:.2f}%. "
+                      "Verificare il tasso soglia applicabile.")
+    return False, f"✅ Tasso mora entro soglia ({soglia_max*100:.2f}%)."
+
+
+# ==========================================================
+# 7. INTERFACCIA STREAMLIT
+# ==========================================================
+
+st.set_page_config(page_title="Calcolo Interessi di Mora", layout="wide")
+st.title("⚖️ Calcolo Interessi di Mora – Ipotecario / Chirografario")
+st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semplice (art. 1283 c.c.).")
+
+with st.sidebar:
+    st.header("Parametri generali")
+    capitale = st.number_input("Capitale residuo (€)", min_value=0.0, value=100000.0, step=1000.0)
+    tasso_mora = st.number_input("Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1) / 100
+    tasso_corr = st.number_input("Tasso corrispettivo (%)", min_value=0.0, value=4.0, step=0.1) / 100
+
+    st.divider()
+    data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15))
+    data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10))
+    data_dbt = st.date_input("Data Decadenza Beneficio Termine (DBT)", value=date(2022, 1, 20))
+    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today())
+
+    st.divider()
+    ha_lettera_DBT = st.checkbox("È stata inviata la lettera di DBT?", value=True)
+
+# --- Alert Usura ---
+supera, msg_usura = verifica_usura(tasso_mora, data_stipula)
+if supera is True:
+    st.error(msg_usura)
+elif supera is False:
+    st.success(msg_usura)
+else:
+    st.warning(msg_usura)
+
+st.divider()
+
+# --- Calcolo ---
+if st.button("🧮 Calcola interessi di mora", type="primary"):
+
+    if ha_lettera_DBT:
+        st.subheader("Modalità: CASO A (Lettera DBT inviata)")
+        risultato = calcola_caso_A(
+            capitale, tasso_mora, data_dbt, data_stipula,
+            data_pignoramento, data_fine
+        )
     else:
-        chirografario += int_a
-        dettaglio.append((f"Triennio ante-pignoramento (no nota) ({inizio_triennio} → {data_pign})", "CHIROGRAFARIO", round(int_a, 2)))
+        st.subheader("Modalità: CASO B (Piano ancora in vigore)")
+        st.info("⚠️ Inserire manualmente le rate scadute nel codice / sezione dedicata.")
+        # Esempio placeholder rate scadute - da collegare a input dinamico
+        rate_scadute = []  # TODO: input dinamico rate
+        risultato = calcola_caso_B(
+            rate_scadute, tasso_mora, tasso_corr,
+            capitale, data_stipula, data_pignoramento, data_fine
+        )
 
-    # FASE B - Periodo ante-triennio (eventuale, sempre chirografario)
-    if data_inizio < inizio_triennio:
-        giorni_b = (inizio_triennio - data_inizio).days
-        int_b = capitale * tasso_mora * giorni_b / 365
-        chirografario += int_b
-        dettaglio.append((f"Periodo ante-triennio ({data_inizio} → {inizio_triennio})", "CHIROGRAFARIO", round(int_b, 2)))
+    col1, col2 = st.columns(2)
+    col1.metric("🏛️ Credito IPOTECARIO", f"€ {risultato['ipotecario']:,.2f}")
+    col2.metric("📄 Credito CHIROGRAFARIO", f"€ {risultato['chirografario']:,.2f}")
 
-    # FASE C - Post-pignoramento al tasso legale (ipotecario)
-    int_c = 0.0
-    anno = data_pign.year
-    data_corr = data_pign
-    while data_corr < data_vendita:
-        fine_anno = date(anno, 12, 31)
-        data_fine = min(fine_anno, data_vendita)
-        giorni = (data_fine - data_corr).days
-        tasso_leg = TASSI_LEGALI.get(anno, 0.02)
-        int_c += capitale * tasso_leg * giorni / 365
-        data_corr = date(anno + 1, 1, 1)
-        anno += 1
-    ipotecario += int_c
-    dettaglio.append((f"Post-pignoramento al tasso legale ({data_pign} → {data_vendita})", "IPOTECARIO", round(int_c, 2)))
+    totale = risultato['ipotecario'] + risultato['chirografario']
+    st.metric("💰 TOTALE interessi di mora", f"€ {totale:,.2f}")
 
-    return {"ipotecario": ipotecario, "chirografario": chirografario, "dettaglio": dettaglio}
-
-
-# ---------- INTERFACCIA ----------
-st.title("📊 Calcolatore Interessi di Mora")
-st.write("Inserisci i dati del mutuo per calcolare la quota ipotecaria e chirografaria.")
-
-capitale = st.number_input("Capitale in mora (€)", value=100000.0)
-tasso_mora = st.number_input("Tasso di mora (%)", value=6.5) / 100
-data_inizio_mora = st.date_input("Data inizio mora", value=date(2020, 1, 1))
-data_pignoramento = st.date_input("Data pignoramento", value=date(2022, 6, 1))
-data_vendita = st.date_input("Data vendita/decreto", value=date(2026, 6, 1))
-tasso_in_nota = st.checkbox("Tasso di mora presente in nota di iscrizione?", value=True)
-
-if st.button("Calcola"):
-    risultato = calcola_mora(capitale, tasso_mora, data_inizio_mora,
-                             data_pignoramento, data_vendita, tasso_in_nota)
-
-    st.subheader("Risultati")
-    st.metric("Totale IPOTECARIO", f"€ {round(risultato['ipotecario'], 2)}")
-    st.metric("Totale CHIROGRAFARIO", f"€ {round(risultato['chirografario'], 2)}")
-
-    st.write("**Dettaglio:**")
-    for descr, tipo, importo in risultato["dettaglio"]:
-        st.write(f"- {descr} → **[{tipo}]** € {importo}")
+    with st.expander("🔍 Dettaglio calcolo"):
+        st.json(risultato['dettaglio'])
