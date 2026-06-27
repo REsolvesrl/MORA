@@ -23,7 +23,6 @@ FREQUENZA_MESI = {
     "Semestrale": 6,
 }
 
-
 # ==========================================================
 # 2. FUNZIONI DI UTILITÀ TEMPORALE
 # ==========================================================
@@ -31,7 +30,6 @@ FREQUENZA_MESI = {
 def giorni_tra(d1, d2):
     """Numero di giorni tra due date."""
     return (d2 - d1).days
-
 
 def interesse_semplice(capitale, tasso_annuo, giorni, base_anno=365):
     """
@@ -42,11 +40,9 @@ def interesse_semplice(capitale, tasso_annuo, giorni, base_anno=365):
         return 0.0
     return capitale * tasso_annuo * (giorni / base_anno)
 
-
 def tasso_legale_per_anno(anno):
     """Restituisce il tasso legale vigente in un dato anno."""
     return TASSI_LEGALI.get(anno, TASSO_LEGALE_DEFAULT)
-
 
 def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
     """
@@ -64,7 +60,6 @@ def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
         cursore = fine_segmento
     return totale
 
-
 def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
     """
     Auto-genera le date delle rate scadute partendo dalla prima rata
@@ -78,7 +73,6 @@ def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
         rate.append({"importo": importo_rata, "data_scadenza": cursore})
         cursore = cursore + relativedelta(months=mesi)
     return rate
-
 
 # ==========================================================
 # 3. CALCOLO ANNATE IPOTECARIE (Art. 2855 c.c.)
@@ -98,7 +92,6 @@ def calcola_triennio(data_stipula, data_pignoramento):
     inizio_triennio = inizio_annata_corrente - relativedelta(years=2)
 
     return inizio_triennio, inizio_annata_corrente, fine_annata_corrente
-
 
 # ==========================================================
 # 4. RIPARTIZIONE IPOTECARIO / CHIROGRAFARIO (Art. 2855 c.c.)
@@ -151,14 +144,12 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
 
     return risultato
 
-
 def _accumula(totale, parziale, chiave_dettaglio):
     """Helper: somma un risultato parziale nel totale e registra il dettaglio."""
     totale["ipotecario"] += parziale["ipotecario"]
     totale["chirografario"] += parziale["chirografario"]
     totale["dettaglio"][chiave_dettaglio] = parziale["dettaglio"]
     return totale
-
 
 # ==========================================================
 # 5. MOTORE UNIFICATO DI CALCOLO (CASO A e CASO B insieme)
@@ -205,7 +196,7 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         totale["ipotecario"] += rip["ipotecario"]
         totale["chirografario"] += rip["chirografario"]
         dettaglio_fase1["rate"][
-            f"rata_{i+1}_({rata['data_scadenza'].isoformat()})"
+            f"rata_{i+1}_({rata['data_scadenza'].strftime('%d/%m/%Y')})"
         ] = rip["dettaglio"]
 
     totale["dettaglio"]["FASE_1_rate"] = dettaglio_fase1
@@ -223,7 +214,6 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
 
     return totale
 
-
 # ==========================================================
 # 6. INTERFACCIA STREAMLIT
 # ==========================================================
@@ -238,9 +228,12 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Date comuni")
-    data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15))
-    data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10))
-    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today())
+    data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15),
+                                 format="DD/MM/YYYY")
+    data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
+                                      format="DD/MM/YYYY")
+    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today(),
+                              format="DD/MM/YYYY")
 
     st.divider()
     st.subheader("Evento di decadenza")
@@ -257,7 +250,8 @@ c1, c2, c3 = st.columns(3)
 importo_rata = c1.number_input("Importo singola rata (€)", min_value=0.0,
                                value=800.0, step=50.0)
 data_prima_rata = c2.date_input("Data scadenza PRIMA rata insoluta",
-                                value=date(2021, 3, 1))
+                                value=date(2021, 3, 1),
+                                format="DD/MM/YYYY")
 frequenza = c3.selectbox("Frequenza rate",
                          options=list(FREQUENZA_MESI.keys()), index=0)
 
@@ -270,12 +264,14 @@ if is_caso_A:
     data_decadenza_effettiva = c5.date_input(
         "📩 Data Lettera DBT",
         value=date(2022, 1, 20),
+        format="DD/MM/YYYY",
         help="Data della comunicazione di decadenza dal beneficio del termine."
     )
 else:
     data_decadenza_effettiva = c5.date_input(
         "📜 Data Notifica Precetto",
         value=date(2023, 2, 1),
+        format="DD/MM/YYYY",
         help="In assenza di DBT, la decadenza decorre dalla notifica del precetto."
     )
 
@@ -299,7 +295,7 @@ if st.button("🧮 Calcola interessi di mora", type="primary"):
     etichetta = "CASO A (Lettera DBT)" if is_caso_A else "CASO B (Notifica Precetto)"
     st.subheader(f"Modalità: {etichetta}")
     st.caption(f"Data Decadenza Effettiva utilizzata: "
-               f"**{data_decadenza_effettiva.isoformat()}**")
+               f"**{data_decadenza_effettiva.strftime('%d/%m/%Y')}**")
 
     # --- MOTORE UNICO per entrambi i casi ---
     risultato = calcola_mora_unificato(
