@@ -548,7 +548,7 @@ with tab1:
             a3.metric("📈 Interessi reali (calcolati dal software) rispetto all'ultima data di attualizzazione GBV", f"€ {interessi_totali:,.2f}")
 
             b1, b2, b3 = st.columns(3)
-            b1.metric("🧮 TOTALE CALCOLATO (Capitale + Interessi + Spese Legali)", f"€ {totale_calcolato:,.2f}")
+            b1.metric("🧮 TOTALE CALCOLATO (somma prima riga)", f"€ {totale_calcolato:,.2f}")
             b2.metric("📑 GBV DICHIARATO + Spese Legali", f"€ {(gbv_dichiarato + spese_legali):,.2f}")
 
             delta = (gbv_dichiarato + spese_legali) - totale_calcolato
