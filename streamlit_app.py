@@ -345,7 +345,7 @@ with st.sidebar:
                                  format="DD/MM/YYYY")
     data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
                                       format="DD/MM/YYYY")
-    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today(),
+    data_fine = st.date_input("Data fine calcolo (Attualizzazione desiderata)", value=date.today(),
                               format="DD/MM/YYYY")
 
     st.divider()
@@ -387,13 +387,14 @@ with tab1:
 
     c4, c5 = st.columns(2)
     capitale_residuo = c4.number_input(
-        "Capitale Residuo cristallizzato (€)",
+        "Capitale Residuo all'ultima rata pagata (€)",
         min_value=0.0,
         value=100000.0,
         step=1000.0,
         help="Intero capitale esigibile alla data di decadenza/precetto. "
              "Su questo importo decorre la mora dalla decadenza in poi. "
              "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi."
+             "Verificare piano di ammortamento."
     )
 
     # ---- Campo dinamico in base al caso ----
@@ -431,7 +432,7 @@ with tab1:
             help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
                  "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
                  "Il check di congruità userà QUESTA data per un confronto "
-                 "'mele con mele', evitando falsi allarmi di anatocismo."
+                 "'alla pari', evitando falsi allarmi di anatocismo."
         )
     else:
         data_attualizzazione_gbv = None
@@ -500,7 +501,7 @@ with tab1:
                 st.caption(
                     "🔒 **Giro A** — Calcolo 'congelato' alla data di "
                     "attualizzazione del GBV per confronto contabile "
-                    "'mele con mele'."
+                    "'alla pari'."
                 )
                 risultato_gbv = calcola_mora_unificato(
                     **params_comuni, data_fine=data_attualizzazione_gbv
@@ -532,7 +533,7 @@ with tab1:
             st.divider()
             st.subheader("🔎 Check GBV (Auditing a componenti)")
             st.caption(
-                "Confronto 'mele con mele': il GBV dichiarato viene paragonato al "
+                "Confronto 'alla pari': il GBV dichiarato viene paragonato al "
                 "nostro calcolo congelato alla **stessa data di attualizzazione** "
                 f"(**{data_attualizzazione_gbv.strftime('%d/%m/%Y')}**), non a oggi."
             )
@@ -751,13 +752,13 @@ with tab3:
                "Simula l'offerta target partendo dal GBV.")
 
     # --- Recupero dati dagli altri tab ---
-    gbv = st.session_state.get("gbv_dichiarato", 0.0)
     debito = st.session_state.get("debito_totale", 0.0)
     spese_procedura = st.session_state.get("spese_future", 0.0)
 
-    # --- GBV base (priorità: GBV > 0 altrimenti debito) ---
-    gbv_base = gbv if gbv > 0 else debito
-    fonte_gbv = "GBV Dichiarato (Tab 1)" if gbv > 0 else "Debito Totale (Tab 1)"
+    # --- GBV base: usiamo sempre il debito totale calcolato a OGGI ---
+    # Ignoriamo il GBV dichiarato dal creditore perché obsoleto ai fini dell'offerta NPL
+    gbv_base = debito
+    fonte_gbv = "Debito Totale Ricalcolato a Oggi (Tab 1)"
 
     if gbv_base <= 0:
         st.info(
