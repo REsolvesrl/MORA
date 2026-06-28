@@ -247,8 +247,13 @@ with st.sidebar:
 # ---- Input comuni a entrambi i casi (corpo principale) ----
 st.subheader("📋 Dati del piano e del credito")
 c1, c2, c3 = st.columns(3)
-importo_rata = c1.number_input("Importo singola rata (€)", min_value=0.0,
-                               value=800.0, step=50.0)
+importo_rata = c1.number_input(
+    "Importo singola rata (€)", 
+    min_value=0.0,
+    value=800.0, 
+    step=50.0,
+    help="Inserire l'intero importo della rata scaduta (Quota Capitale + Quota Interessi), come da giurisprudenza."
+)
 data_prima_rata = c2.date_input("Data scadenza PRIMA rata insoluta",
                                 value=date(2021, 3, 1),
                                 format="DD/MM/YYYY")
