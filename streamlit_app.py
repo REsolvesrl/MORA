@@ -311,12 +311,11 @@ st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semp
 # ---- Sidebar: parametri comuni ----
 with st.sidebar:
     st.header("Parametri generali")
-    tasso_mora = st.number_input("Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1) / 100
-    spese_legali = st.number_input(
-        "Spese legali del creditore (€)",
-        min_value=0.0, value=0.0, step=100.0,
-        help="Spese legali documentate richieste dal creditore (incluse nel totale)."
-    )
+    tasso_mora_fisso = st.number_input(
+        "Tasso di mora (%)",
+        min_value=0.0, value=8.0, step=0.1,
+        help="Tasso di mora contrattuale fisso, applicato per tutti gli anni."
+    ) / 100
 
 tab1, tab2, tab3 = st.tabs([
     "🔍 1. Auditing Credito",
@@ -441,10 +440,10 @@ with tab1:
             anno_corrente = data_decadenza_effettiva.year
             anno_finale = data_finale_calcolo.year
 
-            for anno in range(anno_corrente, anno_finale + 1):
-                # Tasso applicabile per l'anno (mora = legale + spread)
-                tasso_legale = TASSI_LEGALI.get(anno, TASSO_LEGALE_DEFAULT)
-                tasso_mora = tasso_legale + spread_mora
+        for anno in range(anno_corrente, anno_finale + 1):
+            # Tasso di mora contrattuale fisso (uguale per tutti gli anni)
+            tasso_legale = TASSI_LEGALI.get(anno, TASSO_LEGALE_DEFAULT)
+            tasso_mora = tasso_mora_fisso
 
                 # Intervallo di calcolo dentro l'anno
                 inizio = max(data_decadenza_effettiva, date(anno, 1, 1))
