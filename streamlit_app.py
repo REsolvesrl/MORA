@@ -432,7 +432,7 @@ with tab1:
             help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
                  "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
                  "Il check di congruità userà QUESTA data per un confronto "
-                 "'mele con mele', evitando falsi allarmi di anatocismo."
+                 "'alla pari', evitando falsi allarmi di anatocismo."
         )
     else:
         data_attualizzazione_gbv = None
@@ -501,7 +501,7 @@ with tab1:
                 st.caption(
                     "🔒 **Giro A** — Calcolo 'congelato' alla data di "
                     "attualizzazione del GBV per confronto contabile "
-                    "'mele con mele'."
+                    "'alla pari'."
                 )
                 risultato_gbv = calcola_mora_unificato(
                     **params_comuni, data_fine=data_attualizzazione_gbv
@@ -533,7 +533,7 @@ with tab1:
             st.divider()
             st.subheader("🔎 Check GBV (Auditing a componenti)")
             st.caption(
-                "Confronto 'mele con mele': il GBV dichiarato viene paragonato al "
+                "Confronto 'alla pari': il GBV dichiarato viene paragonato al "
                 "nostro calcolo congelato alla **stessa data di attualizzazione** "
                 f"(**{data_attualizzazione_gbv.strftime('%d/%m/%Y')}**), non a oggi."
             )
