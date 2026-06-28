@@ -468,8 +468,12 @@ with tab1:
         st.caption(f"Data Decadenza Effettiva utilizzata: "
                    f"**{data_decadenza_effettiva.strftime('%d/%m/%Y')}**")
 
-        # --- MOTORE UNICO per entrambi i casi ---
-        risultato = calcola_mora_unificato(
+        # ==========================================================
+        # 🔄 DOPPIO CALCOLO: Giro A (Check GBV) + Giro B (Attuale)
+        # ==========================================================
+
+        # --- Parametri comuni ai due giri (tutto tranne data_fine) ---
+        params_comuni = dict(
             importo_rata=importo_rata,
             data_prima_rata=data_prima_rata,
             frequenza=frequenza,
@@ -478,10 +482,35 @@ with tab1:
             data_decadenza_effettiva=data_decadenza_effettiva,
             data_stipula=data_stipula,
             data_pignoramento=data_pignoramento,
-            data_fine=data_fine
         )
 
+        # --- GIRO B (CALCOLO ATTUALE): fino a data_fine (es. oggi) ---
+        # Alimenta le metriche principali e il Tab 3 (negoziazione).
+        risultato = calcola_mora_unificato(**params_comuni, data_fine=data_fine)
+
+        # --- GIRO A (CHECK GBV): fino alla data di attualizzazione del creditore ---
+        # Gira SOLO se è stato dichiarato un GBV, per il confronto "mele con mele".
+        if gbv_dichiarato > 0 and data_attualizzazione_gbv is not None:
+            # Coerenza: la data di attualizzazione non può precedere la decadenza
+            if data_attualizzazione_gbv < data_decadenza_effettiva:
+                st.error("⛔ La *Data di attualizzazione GBV* è precedente alla "
+                         "decadenza. Impossibile eseguire il check contabile.")
+                risultato_gbv = None
+            else:
+                risultato_gbv = calcola_mora_unificato(
+                    **params_comuni, data_fine=data_attualizzazione_gbv
+                )
+        else:
+            risultato_gbv = None
+
         # --- Metriche totali generali ---
+        # --- Avviso: queste metriche sono il calcolo ATTUALE (Giro B) ---
+        st.caption(
+            f"📈 I valori sottostanti sono il **debito reale stimato a oggi** "
+            f"(calcolo fino al **{data_fine.strftime('%d/%m/%Y')}**), utile per "
+            f"la **negoziazione**. Per la verifica contabile del GBV dichiarato "
+            f"vedi più in basso la sezione *Check GBV*."
+        )       
         col1, col2 = st.columns(2)
         col1.metric("🏛️ Credito IPOTECARIO", f"€ {risultato['ipotecario']:,.2f}")
         col2.metric("📄 Credito CHIROGRAFARIO", f"€ {risultato['chirografario']:,.2f}")
@@ -501,21 +530,38 @@ with tab1:
         }
 
         # ==========================================================
-        # 🔎 CHECK GBV (AUDITING A COMPONENTI)
+        # 🔎 CHECK GBV (AUDITING A COMPONENTI) — usa il GIRO A
         # ==========================================================
-        if gbv_dichiarato > 0:
+        if gbv_dichiarato > 0 and risultato_gbv is not None:
             st.divider()
             st.subheader("🔎 Check GBV (Auditing a componenti)")
+            st.caption(
+                f"🍎 **Confronto 'mele con mele':** il nostro calcolo è qui fermato "
+                f"alla **{data_attualizzazione_gbv.strftime('%d/%m/%Y')}** "
+                f"(stessa data di attualizzazione del creditore), **non a oggi**. "
+                f"Così verifichiamo la correttezza contabile della banca *alla sua "
+                f"stessa data*, senza falsi positivi dovuti agli interessi maturati "
+                f"successivamente."
+            )
 
+            # --- Componenti dal GIRO A (attualizzato alla data del creditore) ---
+            interessi_gbv = risultato_gbv['ipotecario'] + risultato_gbv['chirografario']
             capitale_totale = capitale_residuo
-            interessi_totali = totale_gen
+            interessi_totali = interessi_gbv
             totale_calcolato = capitale_totale + interessi_totali + spese_legali
 
+            # --- Riga 1: scomposizione delle componenti ---
             a1, a2, a3 = st.columns(3)
             a1.metric("🏦 Capitale", f"€ {capitale_totale:,.2f}")
             a2.metric("⚖️ Spese Legali", f"€ {spese_legali:,.2f}")
-            a3.metric("📈 Interessi (ex Art. 2855)", f"€ {interessi_totali:,.2f}")
+            a3.metric(
+                "📈 Interessi (ex Art. 2855)",
+                f"€ {interessi_totali:,.2f}",
+                help=f"Interessi di mora calcolati fino alla data di attualizzazione "
+                     f"del GBV ({data_attualizzazione_gbv.strftime('%d/%m/%Y')})."
+            )
 
+            # --- Riga 2: confronto col GBV ---
             b1, b2, b3 = st.columns(3)
             b1.metric("🧮 TOTALE CALCOLATO", f"€ {totale_calcolato:,.2f}")
             b2.metric("📑 GBV DICHIARATO", f"€ {gbv_dichiarato:,.2f}")
@@ -523,6 +569,7 @@ with tab1:
             delta = gbv_dichiarato - totale_calcolato
             b3.metric("📐 DELTA", f"€ {delta:,.2f}", delta_color="inverse")
 
+            # --- Alert semantico ---
             SOGLIA = 10.0
             if delta > SOGLIA:
                 st.error(
@@ -542,6 +589,43 @@ with tab1:
                     f"✅ **GBV congruo:** importi allineati "
                     f"(scarto € {abs(delta):,.2f} entro la soglia di € {SOGLIA:,.2f})."
                 )
+
+            # --- 🆕 Riga 3: confronto temporale (debito alla data GBV vs a oggi) ---
+            interessi_oggi = risultato['ipotecario'] + risultato['chirografario']
+            totale_oggi = capitale_residuo + interessi_oggi + spese_legali
+            crescita = totale_oggi - totale_calcolato
+
+            # Stima crescita mensile media nel periodo intercorso
+            gg_intercorsi = (data_fine - data_attualizzazione_gbv).days
+            crescita_mensile = (crescita / gg_intercorsi * 30) if gg_intercorsi > 0 else 0.0
+
+            st.divider()
+            st.markdown("##### 📈 Dinamica del debito (chiave negoziale)")
+            t1, t2, t3 = st.columns(3)
+            t1.metric(
+                f"🗓️ Debito al {data_attualizzazione_gbv.strftime('%d/%m/%Y')}",
+                f"€ {totale_calcolato:,.2f}",
+                help="Totale ricostruito alla data di attualizzazione del creditore (Giro A)."
+            )
+            t2.metric(
+                f"📅 Debito al {data_fine.strftime('%d/%m/%Y')}",
+                f"€ {totale_oggi:,.2f}",
+                help="Totale reale stimato a oggi (Giro B), base per la negoziazione."
+            )
+            t3.metric(
+                "⏳ Interessi maturati nel frattempo",
+                f"€ {crescita:,.2f}",
+                delta=f"~ € {crescita_mensile:,.0f} / mese",
+                delta_color="inverse",
+                help=f"Crescita del debito nei {gg_intercorsi} giorni intercorsi "
+                     f"tra la data GBV e oggi."
+            )
+            st.caption(
+                f"💡 *Leva negoziale:* il debito cresce di circa "
+                f"**€ {crescita_mensile:,.0f}/mese**. Ogni mese di trattativa che passa "
+                f"aumenta l'esposizione: argomento utile per spingere verso una "
+                f"**chiusura rapida** dello stralcio."
+            )
 
         # ==========================================================
         # 📊 SPACCATO VISIVO TRIPARTIZIONE EX ART. 2855 c.c.
