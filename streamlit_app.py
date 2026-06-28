@@ -759,7 +759,7 @@ with tab3:
     # --- GBV base: usiamo sempre il debito totale calcolato a OGGI ---
     # Ignoriamo il GBV dichiarato dal creditore perché obsoleto ai fini dell'offerta NPL
     gbv_base = debito
-    fonte_gbv = "Debito Totale Ricalcolato a Oggi (Tab 1)"
+    fonte_gbv = "Capitale Residuo mutuo + interessi calcolati a oggi (Tab 1)"
 
     if gbv_base <= 0:
         st.info(
