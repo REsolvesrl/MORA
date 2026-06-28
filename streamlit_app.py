@@ -422,6 +422,20 @@ with tab1:
              "Lascia 0 per saltare il check di congruità."
     )
 
+    # 🆕 Data di attualizzazione del GBV (appare solo se GBV > 0)
+    if gbv_dichiarato > 0:
+        data_attualizzazione_gbv = st.date_input(
+            "📅 Data di attualizzazione del GBV",
+            value=date(2022, 11, 6),
+            format="DD/MM/YYYY",
+            help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
+                 "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
+                 "Il check di congruità userà QUESTA data per un confronto "
+                 "'mele con mele', evitando falsi allarmi di anatocismo."
+        )
+    else:
+        data_attualizzazione_gbv = None
+
     # 🔗 Salvo il GBV per il Tab 3 (NPL)
     st.session_state["gbv_dichiarato"] = gbv_dichiarato
 
@@ -454,18 +468,43 @@ with tab1:
         st.caption(f"Data Decadenza Effettiva utilizzata: "
                    f"**{data_decadenza_effettiva.strftime('%d/%m/%Y')}**")
 
-        # --- MOTORE UNICO per entrambi i casi ---
-        risultato = calcola_mora_unificato(
-            importo_rata=importo_rata,
-            data_prima_rata=data_prima_rata,
-            frequenza=frequenza,
-            capitale_residuo=capitale_residuo,
-            tasso_mora=tasso_mora,
-            data_decadenza_effettiva=data_decadenza_effettiva,
-            data_stipula=data_stipula,
-            data_pignoramento=data_pignoramento,
-            data_fine=data_fine
-        )
+        # --- PARAMETRI COMUNI (condivisi da entrambi i giri) ---
+        params_comuni = {
+            "importo_rata": importo_rata,
+            "data_prima_rata": data_prima_rata,
+            "frequenza": frequenza,
+            "capitale_residuo": capitale_residuo,
+            "tasso_mora": tasso_mora,
+            "data_decadenza_effettiva": data_decadenza_effettiva,
+            "data_stipula": data_stipula,
+            "data_pignoramento": data_pignoramento,
+        }
+
+        # --- GIRO B (Calcolo Attuale): stima del debito a oggi / data_fine ---
+        st.caption("⏳ **Giro B** — Debito attuale aggiornato alla data di fine "
+                   "calcolo per orientamento negoziale.")
+        risultato = calcola_mora_unificato(**params_comuni, data_fine=data_fine)
+
+        # --- GIRO A (Check GBV): calcolo congelato alla data di attualizzazione ---
+        risultato_gbv = None
+        if gbv_dichiarato > 0 and data_attualizzazione_gbv is not None:
+            if data_attualizzazione_gbv < data_decadenza_effettiva:
+                st.error(
+                    f"⛔ La data di attualizzazione GBV "
+                    f"({data_attualizzazione_gbv.strftime('%d/%m/%Y')}) è "
+                    f"precedente alla decadenza effettiva "
+                    f"({data_decadenza_effettiva.strftime('%d/%m/%Y')}). "
+                    "Verificare."
+                )
+            else:
+                st.caption(
+                    "🔒 **Giro A** — Calcolo 'congelato' alla data di "
+                    "attualizzazione del GBV per confronto contabile "
+                    "'mele con mele'."
+                )
+                risultato_gbv = calcola_mora_unificato(
+                    **params_comuni, data_fine=data_attualizzazione_gbv
+                )
 
         # --- Metriche totali generali ---
         col1, col2 = st.columns(2)
@@ -489,12 +528,16 @@ with tab1:
         # ==========================================================
         # 🔎 CHECK GBV (AUDITING A COMPONENTI)
         # ==========================================================
-        if gbv_dichiarato > 0:
+        if gbv_dichiarato > 0 and risultato_gbv is not None:
             st.divider()
             st.subheader("🔎 Check GBV (Auditing a componenti)")
-
+            st.caption(
+                "Confronto 'mele con mele': il GBV dichiarato viene paragonato al "
+                "nostro calcolo congelato alla **stessa data di attualizzazione** "
+                f"(**{data_attualizzazione_gbv.strftime('%d/%m/%Y')}**), non a oggi."
+            )
+            interessi_totali = risultato_gbv["ipotecario"] + risultato_gbv["chirografario"]
             capitale_totale = capitale_residuo
-            interessi_totali = totale_gen
             totale_calcolato = capitale_totale + interessi_totali + spese_legali
 
             a1, a2, a3 = st.columns(3)
