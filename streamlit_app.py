@@ -252,7 +252,7 @@ importo_rata = c1.number_input(
     min_value=0.0,
     value=800.0, 
     step=50.0,
-    help="Inserire l'intero importo della rata scaduta (Quota Capitale + Quota Interessi), come da giurisprudenza."
+    help="Inserire l'intero importo della rata scaduta (Quota Capitale + Quota Interessi)"
 )
 data_prima_rata = c2.date_input("Data scadenza PRIMA rata insoluta",
                                 value=date(2021, 3, 1),
