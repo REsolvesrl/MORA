@@ -169,7 +169,16 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            data_stipula, data_pignoramento, data_fine):
     """
     MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
-    [...docstring invariata...]
+    L'unica differenza tra i due casi è 'data_decadenza_effettiva':
+        - CASO A -> Data Lettera DBT
+        - CASO B -> Data Notifica Precetto
+
+    FASE 1 (Rate): da 'data_prima_rata' a 'data_decadenza_effettiva'.
+        Mora su ogni singola rata, dalla sua scadenza fino alla decadenza.
+    FASE 2 (Capitale): da 'data_decadenza_effettiva' a 'data_fine'.
+        Mora sull'INTERO capitale residuo.
+
+    Entrambe le fasi passano per il filtro Art. 2855 c.c.
     """
     totale = {
         "ipotecario": 0.0,
@@ -333,16 +342,66 @@ if st.button("🧮 Calcola interessi di mora", type="primary"):
         data_fine=data_fine
     )
 
-    # --- Riepilogo rate auto-generate ---
-    n_rate = risultato["dettaglio"]["FASE_1_rate"]["numero_rate_generate"]
-    st.info(f"🔢 Rate insolute auto-generate (prima rata → decadenza): **{n_rate}**")
-
+    # --- Metriche totali generali ---
     col1, col2 = st.columns(2)
     col1.metric("🏛️ Credito IPOTECARIO", f"€ {risultato['ipotecario']:,.2f}")
     col2.metric("📄 Credito CHIROGRAFARIO", f"€ {risultato['chirografario']:,.2f}")
 
-    totale = risultato['ipotecario'] + risultato['chirografario']
-    st.metric("💰 TOTALE interessi di mora", f"€ {totale:,.2f}")
+    totale_gen = risultato['ipotecario'] + risultato['chirografario']
+    st.metric("💰 TOTALE interessi di mora", f"€ {totale_gen:,.2f}")
 
-    with st.expander("🔍 Dettaglio calcolo"):
+    # ==========================================================
+    # 📊 SPACCATO VISIVO TRIPARTIZIONE EX ART. 2855 c.c.
+    # ==========================================================
+    st.divider()
+    st.subheader("📊 Divisione ex Art. 2855 c.c.")
+
+    v = risultato["voci_2855"]
+    fase1, fase2, fase3 = st.columns(3)
+
+    # --- FASE 1: PRE-TRIENNIO (tutto chirografario @ mora) ---
+    with fase1:
+        st.info(
+            "**🔵 FASE 1 – PRE-TRIENNIO**\n\n"
+            "Interessi anteriori al triennio: **degradano interamente a "
+            "chirografario**, pur restando al tasso di mora.\n\n"
+            f"📄 Chirografario (mora):\n\n"
+            f"### € {v['pre_chiro']:,.2f}"
+        )
+
+    # --- FASE 2: TRIENNIO (tutto ipotecario @ mora) ---
+    with fase2:
+        st.success(
+            "**🟢 FASE 2 – TRIENNIO**\n\n"
+            "Annata in corso + 2 precedenti: **garanzia ipotecaria piena** "
+            "al tasso di mora pattuito.\n\n"
+            f"🏛️ Ipotecario (mora):\n\n"
+            f"### € {v['triennio_ipo']:,.2f}"
+        )
+
+    # --- FASE 3: POST-TRIENNIO (ipotecario @ legale + chiro eccedenza) ---
+    with fase3:
+        st.warning(
+            "**🟠 FASE 3 – POST-TRIENNIO**\n\n"
+            "Dopo l'annata del pignoramento la garanzia **degrada**: "
+            "resta ipotecaria solo la quota al **tasso legale**, "
+            "l'eccedenza diventa chirografaria.\n\n"
+            f"🏛️ Ipotecario (legale): **€ {v['post_ipo']:,.2f}**\n\n"
+            f"📄 Chirografario (eccedenza): **€ {v['post_chiro']:,.2f}**"
+        )
+
+    # --- Quadratura di controllo (facoltativa ma utile) ---
+    somma_voci = v['pre_chiro'] + v['triennio_ipo'] + v['post_ipo'] + v['post_chiro']
+    scarto = abs(somma_voci - totale_gen)
+    if scarto > 0.01:
+        st.error(f"⚠️ Scarto di quadratura: € {scarto:,.2f} — verificare la logica.")
+    else:
+        st.caption("✅ Quadratura verificata: la somma delle 3 fasi coincide col totale.")
+
+    # --- Riepilogo rate auto-generate ---
+    n_rate = risultato["dettaglio"]["FASE_1_rate"]["numero_rate_generate"]
+    st.info(f"🔢 Rate insolute auto-generate (prima rata → decadenza): **{n_rate}**")
+
+    # --- Dettaglio grezzo JSON (invariato) ---
+    with st.expander("🔍 Dettaglio calcolo (dati grezzi)"):
         st.json(risultato['dettaglio'])
