@@ -545,7 +545,7 @@ with tab1:
             a1, a2, a3 = st.columns(3)
             a1.metric("🏦 Quota capitale residua mutuo", f"€ {capitale_totale:,.2f}")
             a2.metric("⚖️ Spese legali sostenute", f"€ {spese_legali:,.2f}")
-            a3.metric("📈 Interessi reali (calcolati dal software) all'ultima data di precisazione GBV, f"€ {interessi_totali:,.2f}")
+            a3.metric("📈 Interessi (ex Art. 2855), f"€ {interessi_totali:,.2f}")
 
             b1, b2, b3 = st.columns(3)
             b1.metric("🧮 TOTALE CALCOLATO", f"€ {totale_calcolato:,.2f}")
