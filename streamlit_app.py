@@ -773,7 +773,7 @@ with tab3:
     r1, r2, r3 = st.columns(3)
     r1.metric("🏦 GBV Partenza", f"€ {gbv_base:,.2f}", help=f"Fonte: {fonte_gbv}")
     r2.metric("💸 Spese Procedura (Tab 2)", f"€ {spese_procedura:,.2f}")
-    r3.metric("💰 Debito Totale (Tab 1)", f"€ {debito:,.2f}")
+    r3.metric("💰 Debito Totale ", f"€ {debito:,.2f}")
 
     st.divider()
 
