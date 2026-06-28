@@ -1,4 +1,5 @@
 import streamlit as st
+import plotly.graph_objects as go
 from datetime import date
 from dateutil.relativedelta import relativedelta
 
@@ -885,18 +886,6 @@ with tab3:
         )
 
     # ============================================================
-    # GRAFICO WATERFALL
-    # ============================================================
-    st.markdown("##### 📈 Waterfall Chart")
-    st.bar_chart({
-        "Valore (€)": {
-            "GBV partenza": gbv_base,
-            "Base netta": base_netta,
-            "Offerta Target": offerta_target,
-        }
-    })
-
-    # ============================================================
     # METRICHE NPL PER INVESTITORI
     # ============================================================
     st.markdown("#### 📐 Metriche Finanziarie – Investitori NPL")
@@ -921,3 +910,91 @@ with tab3:
               help="Return on Equity = Utile Lordo / Capitale Investito Totale")
     m4.metric("📈 IRR Annualizzato", f"{irrennuale*100:.2f}%",
               help=f"Tasso Interno di Rendimento annualizzato su {durata_mesi} mesi")
+
+    # ============================================================
+    # GRAFICO DI SENSIBILITÀ – Offerta vs Utile Lordo & ROE
+    # ============================================================
+    st.divider()
+    st.markdown("##### 📈 Analisi di Sensibilità: Offerta → Utile & ROE")
+
+    # Range di simulazione: sconto dal 10% al 60% sulla Base Netta
+    sconti = [s / 100.0 for s in range(10, 61)]
+    offerte_sim = [base_netta * (1 - s) for s in sconti]
+    utili_sim = [base_netta * s for s in sconti]  # utile = base_netta * margine
+
+    # ROE per ogni scenario simulato
+    roe_sim = []
+    for off, ut in zip(offerte_sim, utili_sim):
+        cap_inv = off + totale_spese_fisse
+        roe_sim.append((ut / cap_inv * 100) if cap_inv > 0 else 0)
+
+    fig = go.Figure()
+
+    # Curva Utile Lordo vs Offerta
+    fig.add_trace(go.Scatter(
+        x=offerte_sim,
+        y=utili_sim,
+        mode="lines",
+        name="Utile Lordo",
+        line=dict(color="#1f77b4", width=3),
+        customdata=roe_sim,
+        hovertemplate=(
+            "Offerta: € %{x:,.0f}<br>"
+            "Utile Lordo: € %{y:,.0f}<br>"
+            "ROE: %{customdata:.2f}%<extra></extra>"
+        ),
+    ))
+
+    # Marker vistoso sullo scenario "Offerta Target" attuale
+    fig.add_trace(go.Scatter(
+        x=[offerta_target],
+        y=[utile_lordo],
+        mode="markers",
+        name="Offerta Target",
+        marker=dict(color="#ff4b4b", size=16, symbol="star",
+                    line=dict(color="white", width=1.5)),
+        hovertemplate=(
+            "🎯 OFFERTA TARGET<br>"
+            "Offerta: € %{x:,.0f}<br>"
+            "Utile: € %{y:,.0f}<br>"
+            f"ROE: {roe*100:.2f}%<extra></extra>"
+        ),
+    ))
+
+    # Linee tratteggiate di proiezione sugli assi
+    fig.add_shape(type="line", x0=offerta_target, x1=offerta_target,
+                  y0=0, y1=utile_lordo,
+                  line=dict(color="#ff4b4b", width=1.5, dash="dash"))
+    fig.add_shape(type="line", x0=0, x1=offerta_target,
+                  y0=utile_lordo, y1=utile_lordo,
+                  line=dict(color="#ff4b4b", width=1.5, dash="dash"))
+
+    # Annotation con il ROE atteso collegata al punto target
+    fig.add_annotation(
+        x=offerta_target, y=utile_lordo,
+        text=(f"<b>🎯 Offerta Target</b><br>"
+              f"€ {offerta_target:,.0f}<br>"
+              f"<b>ROE Atteso: {roe*100:.2f}%</b>"),
+        showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2,
+        arrowcolor="#ff4b4b",
+        ax=60, ay=-60,
+        bgcolor="rgba(255,75,75,0.12)",
+        bordercolor="#ff4b4b", borderwidth=1.5, borderpad=8,
+        font=dict(size=13, color="#ff4b4b"),
+    )
+
+    fig.update_layout(
+        title="Sensibilità Utile Lordo all'Importo dell'Offerta",
+        xaxis_title="Importo Offerta (€)",
+        yaxis_title="Utile Lordo (€)",
+        xaxis=dict(tickformat=",.0f", tickprefix="€ "),
+        yaxis=dict(tickformat=",.0f", tickprefix="€ "),
+        hovermode="closest",
+        template="plotly_white",
+        height=480,
+        margin=dict(l=20, r=20, t=60, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
