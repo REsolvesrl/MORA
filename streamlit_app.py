@@ -827,6 +827,14 @@ with tab3:
     ) / 100.0
 
     # ============================================================
+    # Durata stimata operazione (per IRR annualizzato)
+    # ============================================================
+    durata_mesi = st.number_input(
+        "⏱ Durata stimata operazione (mesi)",
+        min_value=1, max_value=120, value=18, step=1,
+    )
+
+    # ============================================================
     # WATERFALL NPL
     # ============================================================
     base_netta = gbv_base - totale_spese_fisse
@@ -887,3 +895,29 @@ with tab3:
             "Offerta Target": offerta_target,
         }
     })
+
+    # ============================================================
+    # METRICHE NPL PER INVESTITORI
+    # ============================================================
+    st.markdown("#### 📐 Metriche Finanziarie – Investitori NPL")
+
+    # Capitale Investito Totale = Offerta Target + Totale Spese Fisse
+    capitale_investito = offerta_target + totale_spese_fisse
+
+    # Utile Lordo = margine in Euro generato dall'operazione
+    utile_lordo = base_netta - offerta_target  # = importo_margine
+
+    # ROE = Utile Lordo / Capitale Investito Totale
+    roe = utile_lordo / capitale_investito if capitale_investito > 0 else 0
+
+    # IRR annualizzato = (1 + ROE)^(12/mesi) - 1
+    irrennuale = ((1 + roe) ** (12 / durata_mesi) - 1) if durata_mesi > 0 else 0
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🎯 Offerta Target", f"€ {offerta_target:,.2f}")
+    m2.metric("💶 Utile Lordo", f"€ {utile_lordo:,.2f}",
+              help="Margine in Euro = Base Netta − Offerta Target")
+    m3.metric("📊 ROE", f"{roe*100:.2f}%",
+              help="Return on Equity = Utile Lordo / Capitale Investito Totale")
+    m4.metric("📈 IRR Annualizzato", f"{irrennuale*100:.2f}%",
+              help=f"Tasso Interno di Rendimento annualizzato su {durata_mesi} mesi")
