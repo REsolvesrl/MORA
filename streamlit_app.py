@@ -731,7 +731,5 @@ with tab3:
 # FOOTER
 # ==========================================================
 st.divider()
-st.caption("⚠️ Strumento di supporto all'analisi. I calcoli sono indicativi e non "
-           "sostituiscono la consulenza legale/fiscale professionale. "
-           "Verificare sempre tassi, date e voci di spesa nel caso concreto.")
+st.caption("⚠️ Strumento di supporto all'analisi. I calcoli sono indicativi e verificare sempre tassi, date e voci di spesa nel caso concreto.")
 
