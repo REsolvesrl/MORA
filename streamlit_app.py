@@ -442,7 +442,7 @@ with tab1:
 
     with st.expander("➕ Aggiungi Spese Legali / Altro"):
         spese_legali = st.number_input(
-            "⚖️ Spese legali / procedurali (€)",
+            "⚖️ Spese legali creditore / procedurali (€)",
             min_value=0.0, value=0.0, step=100.0,
             help="Spese di precetto, notifica, procedura esecutiva richieste in atto."
         )
