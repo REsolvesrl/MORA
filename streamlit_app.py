@@ -431,7 +431,7 @@ with tab1:
             help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
                  "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
                  "Il check di congruità userà QUESTA data per un confronto "
-                 "'alla pari', evitando falsi allarmi di anatocismo."
+                 "'mele con mele', evitando falsi allarmi di anatocismo."
         )
     else:
         data_attualizzazione_gbv = None
@@ -500,7 +500,7 @@ with tab1:
                 st.caption(
                     "🔒 **Giro A** — Calcolo 'congelato' alla data di "
                     "attualizzazione del GBV per confronto contabile "
-                    "'alla pari'."
+                    "'mele con mele'."
                 )
                 risultato_gbv = calcola_mora_unificato(
                     **params_comuni, data_fine=data_attualizzazione_gbv
@@ -532,7 +532,7 @@ with tab1:
             st.divider()
             st.subheader("🔎 Check GBV (Auditing a componenti)")
             st.caption(
-                "Confronto 'alla pari': il GBV dichiarato viene paragonato al "
+                "Confronto 'mele con mele': il GBV dichiarato viene paragonato al "
                 "nostro calcolo congelato alla **stessa data di attualizzazione** "
                 f"(**{data_attualizzazione_gbv.strftime('%d/%m/%Y')}**), non a oggi."
             )
@@ -751,13 +751,13 @@ with tab3:
                "Simula l'offerta target partendo dal GBV.")
 
     # --- Recupero dati dagli altri tab ---
-    gbv = st.session_state.get("gbv_dichiarato", 0.0)
     debito = st.session_state.get("debito_totale", 0.0)
     spese_procedura = st.session_state.get("spese_future", 0.0)
 
-    # --- GBV base (priorità: GBV > 0 altrimenti debito) ---
-    gbv_base = gbv if gbv > 0 else debito
-    fonte_gbv = "GBV Dichiarato (Tab 1)" if gbv > 0 else "Debito Totale (Tab 1)"
+    # --- GBV base: usiamo sempre il debito totale calcolato a OGGI ---
+    # Ignoriamo il GBV dichiarato dal creditore perché obsoleto ai fini dell'offerta NPL
+    gbv_base = debito
+    fonte_gbv = "Debito Totale Ricalcolato a Oggi (Tab 1)"
 
     if gbv_base <= 0:
         st.info(
