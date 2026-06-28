@@ -287,10 +287,57 @@ def stima_spese_esecutive(tipo_procedura, valore_bene):
     return voci, totale
 
 # ==========================================================
+# 6-bis. LOGICA SIMULAZIONE SALDO E STRALCIO
+# ==========================================================
+
+def analizza_stralcio(debito_totale, spese_future, offerta_stralcio,
+                      valore_aggiudicazione, spese_procedura_asta):
+    """
+    Analisi di convenienza Win-Win del saldo e stralcio.
+    - Worst case debitore = debito attuale + spese future di procedura.
+    - Ricavato netto creditore = aggiudicazione - spese di procedura.
+    Ritorna un dizionario con tutti gli indicatori.
+    """
+    worst_case = debito_totale + spese_future
+    risparmio_debitore = worst_case - offerta_stralcio
+    ricavato_netto_asta = valore_aggiudicazione - spese_procedura_asta
+    vantaggio_creditore = offerta_stralcio - ricavato_netto_asta
+
+    return {
+        "worst_case": worst_case,
+        "risparmio_debitore": risparmio_debitore,
+        "ricavato_netto_asta": ricavato_netto_asta,
+        "vantaggio_creditore": vantaggio_creditore,
+        "conviene_al_creditore": offerta_stralcio >= ricavato_netto_asta,
+    }
+
+# ==========================================================
 # 7. INTERFACCIA STREAMLIT
 # ==========================================================
 
 st.set_page_config(page_title="Calcolo Interessi di Mora", layout="wide")
+
+# ---- Stile: tab più grandi e visibili ----
+st.markdown("""
+    <style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 12px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 55px;
+        padding: 0px 28px;
+        background-color: #f0f2f6;
+        border-radius: 10px 10px 0px 0px;
+        font-size: 18px;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ff4b4b;
+        color: white;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("⚖️ Calcolo Interessi di Mora – Ipotecario / Chirografario")
 st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semplice (art. 1283 c.c.).")
 
@@ -320,7 +367,11 @@ with st.sidebar:
 # ==========================================================
 # TAB PRINCIPALI
 # ==========================================================
-tab1, tab2 = st.tabs(["📊 Auditing e Check GBV", "🔮 Previsione Spese Esecutive"])
+tab1, tab2, tab3 = st.tabs([
+    "📊 Auditing e Check GBV",
+    "🔮 Previsione Spese Esecutive",
+    "🤝 Simulazione Saldo e Stralcio",
+])
 
 # ----------------------------------------------------------
 # TAB 1 — AUDITING E CHECK GBV (fotografia del passato)
@@ -427,6 +478,17 @@ with tab1:
 
         totale_gen = risultato['ipotecario'] + risultato['chirografario']
         st.metric("💰 TOTALE interessi di mora", f"€ {totale_gen:,.2f}")
+
+        # --- Salvo i totali per il Tab 3 (Saldo e Stralcio) ---
+        debito_totale = capitale_residuo + totale_gen + spese_legali
+        st.session_state["debito_totale"] = debito_totale
+        st.session_state["debito_dettaglio"] = {
+            "capitale": capitale_residuo,
+            "interessi": totale_gen,
+            "spese_legali": spese_legali,
+            "ipotecario": risultato["ipotecario"],
+            "chirografario": risultato["chirografario"],
+        }
 
         # ==========================================================
         # 🔎 CHECK GBV (AUDITING A COMPONENTI)
@@ -560,6 +622,10 @@ with tab2:
     tipo_norm = "Pignoramento Immobiliare" if tipo_procedura == "Pignoramento Immobiliare" else "Mobiliare"
     voci_spese, totale_spese = stima_spese_esecutive(tipo_norm, valore_bene)
 
+    # --- Salvo per il Tab 3 ---
+    st.session_state["spese_future"] = totale_spese
+    st.session_state["valore_bene"] = valore_bene
+
     st.markdown(f"#### 📑 Dettaglio voci – *{tipo_procedura}*")
 
     # --- Mostro le voci come metriche su colonne (max 4 per riga) ---
@@ -581,3 +647,146 @@ with tab2:
     if tipo_norm == "Pignoramento Immobiliare" and valore_bene > 0:
         incidenza = (totale_spese / valore_bene) * 100
         st.caption(f"📉 Incidenza delle spese sul valore del bene: **{incidenza:.1f}%**")
+
+# ----------------------------------------------------------
+# TAB 3 — SIMULAZIONE SALDO E STRALCIO (consulenza negoziale)
+# ----------------------------------------------------------
+with tab3:
+    st.subheader("🤝 Simulazione Saldo e Stralcio")
+    st.caption("Confronto razionale tra l'offerta cash immediata e il ricavato "
+               "netto (scontato dal tempo) di una vendita all'asta.")
+
+    # --- Recupero dati dagli altri tab ---
+    debito_totale = st.session_state.get("debito_totale", 0.0)
+    spese_future = st.session_state.get("spese_future", 0.0)
+    valore_bene = st.session_state.get("valore_bene", 0.0)
+
+    # --- Avvisi se mancano i dati a monte ---
+    if debito_totale <= 0:
+        st.warning("⚠️ Esegui prima il calcolo nel **Tab 1 (Auditing)** "
+                   "(pulsante *Calcola interessi di mora*) per importare "
+                   "il Debito Totale Attuale.")
+    if spese_future <= 0:
+        st.warning("⚠️ Apri il **Tab 2 (Previsione Spese)** per importare "
+                   "le spese di procedura e il valore del bene.")
+
+    # --- Riepilogo dati importati ---
+    r1, r2, r3 = st.columns(3)
+    r1.metric("💰 Debito Totale Attuale (Tab 1)", f"€ {debito_totale:,.2f}")
+    r2.metric("💸 Spese Future Procedura (Tab 2)", f"€ {spese_future:,.2f}")
+    r3.metric("🏠 Valore Bene (Tab 2)", f"€ {valore_bene:,.2f}")
+
+    st.divider()
+
+    # --- SCENARIO PEGGIORE ---
+    worst_case = debito_totale + spese_future
+    st.markdown("#### 🔴 Scenario Peggiore (andare fino in fondo)")
+    st.metric(
+        "📛 DEBITO FINALE STIMATO (Debito + Spese)",
+        f"€ {worst_case:,.2f}",
+        help="Quanto dovrebbe pagare il debitore se la procedura andasse "
+             "fino al decreto di trasferimento, comprese tutte le spese."
+    )
+
+    st.divider()
+
+    # --- SIMULATORE DI STRALCIO ---
+    st.markdown("#### 🎯 Parametri della trattativa")
+    s1, s2 = st.columns(2)
+
+    offerta_stralcio = s1.number_input(
+        "💶 Importo Offerta Saldo e Stralcio (€)",
+        min_value=0.0,
+        value=round(worst_case * 0.5, 2) if worst_case > 0 else 50000.0,
+        step=1000.0,
+        help="L'importo cash che il debitore (o un terzo) propone di versare "
+             "subito a saldo e stralcio dell'intera posizione."
+    )
+
+    perc_aggiudicazione = s2.slider(
+        "📉 Valore di probabile aggiudicazione all'asta (% del valore bene)",
+        min_value=30, max_value=100, value=65, step=5,
+        help="Le aste si chiudono tipicamente al 60-70% del valore di stima, "
+             "dopo vari ribassi. Stima prudenziale consigliata."
+    )
+    valore_aggiudicazione = valore_bene * (perc_aggiudicazione / 100)
+    s2.caption(f"➡️ Aggiudicazione stimata: **€ {valore_aggiudicazione:,.2f}**")
+
+    st.divider()
+
+    # --- ANALISI DI CONVENIENZA WIN-WIN ---
+    if offerta_stralcio > 0 and valore_bene > 0:
+        ana = analizza_stralcio(
+            debito_totale=debito_totale,
+            spese_future=spese_future,
+            offerta_stralcio=offerta_stralcio,
+            valore_aggiudicazione=valore_aggiudicazione,
+            spese_procedura_asta=spese_future,
+        )
+
+        col_deb, col_cred = st.columns(2)
+
+        with col_deb:
+            st.markdown("##### 👤 Per il DEBITORE")
+            st.metric(
+                "💚 Risparmio totale",
+                f"€ {ana['risparmio_debitore']:,.2f}",
+                help="Differenza tra lo scenario peggiore e l'offerta di stralcio."
+            )
+            if worst_case > 0:
+                perc_risp = (ana['risparmio_debitore'] / worst_case) * 100
+                st.caption(f"Abbattimento del debito: **{perc_risp:.1f}%**")
+
+        with col_cred:
+            st.markdown("##### 🏦 Per il CREDITORE")
+            st.metric(
+                "📊 Ricavato netto stimato dall'asta",
+                f"€ {ana['ricavato_netto_asta']:,.2f}",
+                help="Valore di aggiudicazione meno le spese di procedura."
+            )
+            st.metric(
+                "⚖️ Vantaggio dello stralcio vs asta",
+                f"€ {ana['vantaggio_creditore']:,.2f}",
+                delta=f"{'Conviene' if ana['conviene_al_creditore'] else 'Sfavorevole'}",
+                delta_color="normal" if ana['conviene_al_creditore'] else "inverse",
+            )
+
+        st.divider()
+
+        # --- VERDETTO NEGOZIALE ---
+        if ana["conviene_al_creditore"]:
+            st.success(
+                f"✅ **OFFERTA CONVENIENTE PER LA BANCA.** "
+                f"L'offerta di € {offerta_stralcio:,.2f} è **superiore** al ricavato "
+                f"netto stimato dall'asta (€ {ana['ricavato_netto_asta']:,.2f}). "
+                f"Per il creditore è razionale **accettare subito**: incassa "
+                f"€ {ana['vantaggio_creditore']:,.2f} in più, **senza attendere anni** "
+                f"di procedura e azzerando il rischio di diserzione delle aste."
+            )
+        else:
+            gap = -ana["vantaggio_creditore"]
+            st.warning(
+                f"⚠️ **OFFERTA ATTUALMENTE BASSA.** "
+                f"L'offerta di € {offerta_stralcio:,.2f} è **inferiore** al ricavato "
+                f"netto d'asta (€ {ana['ricavato_netto_asta']:,.2f}) di circa "
+                f"€ {gap:,.2f}.\n\n"
+                f"💡 *Leva negoziale:* ricorda alla banca il **valore del tempo** "
+                f"(anni di attesa, attualizzazione del denaro), il **rischio di "
+                f"ribassi successivi** e i **costi di gestione** non ancora "
+                f"conteggiati. Una controproposta intorno a "
+                f"€ {ana['ricavato_netto_asta']:,.2f} sarebbe difficilmente "
+                f"rifiutabile."
+            )
+
+        # --- Sintesi visiva comparativa ---
+        st.markdown("##### 📈 Sintesi comparativa")
+        st.bar_chart({
+            "Importi (€)": {
+                "Worst Case (debito+spese)": worst_case,
+                "Offerta Stralcio": offerta_stralcio,
+                "Ricavato Netto Asta": ana["ricavato_netto_asta"],
+            }
+        })
+    else:
+        st.info("ℹ️ Inserisci un'offerta di stralcio e un valore del bene "
+                "(dal Tab 2) per attivare l'analisi di convenienza.")
