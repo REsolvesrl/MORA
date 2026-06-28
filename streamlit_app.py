@@ -345,7 +345,7 @@ with st.sidebar:
                                  format="DD/MM/YYYY")
     data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
                                       format="DD/MM/YYYY")
-    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today(),
+    data_fine = st.date_input("Data fine calcolo (Attualizzazione desiderata)", value=date.today(),
                               format="DD/MM/YYYY")
 
     st.divider()
@@ -387,13 +387,14 @@ with tab1:
 
     c4, c5 = st.columns(2)
     capitale_residuo = c4.number_input(
-        "Capitale Residuo cristallizzato (€)",
+        "Capitale Residuo all'ultima rata pagata (€)",
         min_value=0.0,
         value=100000.0,
         step=1000.0,
         help="Intero capitale esigibile alla data di decadenza/precetto. "
              "Su questo importo decorre la mora dalla decadenza in poi. "
              "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi."
+             "Verificare piano di ammortamento."
     )
 
     # ---- Campo dinamico in base al caso ----
