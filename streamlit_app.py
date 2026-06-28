@@ -326,14 +326,21 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] {
         height: 55px;
         padding: 0px 28px;
-        background-color: #f0f2f6;
+        background-color: rgba(128, 128, 128, 0.15);
+        border: 1px solid rgba(128, 128, 128, 0.4);
         border-radius: 10px 10px 0px 0px;
         font-size: 18px;
         font-weight: 600;
+        color: inherit;          /* eredita il colore del tema (bianco su dark) */
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: rgba(255, 75, 75, 0.25);
+        color: inherit;
     }
     .stTabs [aria-selected="true"] {
         background-color: #ff4b4b;
-        color: white;
+        color: white !important;  /* testo bianco forzato sulla tab attiva */
+        border: 1px solid #ff4b4b;
     }
     </style>
 """, unsafe_allow_html=True)
