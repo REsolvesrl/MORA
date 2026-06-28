@@ -145,10 +145,18 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     return risultato
 
 def _accumula(totale, parziale, chiave_dettaglio):
-    """Helper: somma un risultato parziale nel totale e registra il dettaglio."""
+    """Helper: somma un risultato parziale nel totale e registra il dettaglio.
+    Accumula inoltre le 4 voci della tripartizione ex art. 2855 c.c."""
     totale["ipotecario"] += parziale["ipotecario"]
     totale["chirografario"] += parziale["chirografario"]
     totale["dettaglio"][chiave_dettaglio] = parziale["dettaglio"]
+
+    # --- Accumulo voci Art. 2855 c.c. ---
+    d = parziale["dettaglio"]
+    totale["voci_2855"]["pre_chiro"]    += d.get("pre_triennio_chiro", 0.0)
+    totale["voci_2855"]["triennio_ipo"] += d.get("triennio_ipo_mora", 0.0)
+    totale["voci_2855"]["post_ipo"]     += d.get("post_ipo_legale", 0.0)
+    totale["voci_2855"]["post_chiro"]   += d.get("post_chiro_diff", 0.0)
     return totale
 
 # ==========================================================
@@ -161,18 +169,20 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            data_stipula, data_pignoramento, data_fine):
     """
     MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
-    L'unica differenza tra i due casi è 'data_decadenza_effettiva':
-        - CASO A -> Data Lettera DBT
-        - CASO B -> Data Notifica Precetto
-
-    FASE 1 (Rate): da 'data_prima_rata' a 'data_decadenza_effettiva'.
-        Mora su ogni singola rata, dalla sua scadenza fino alla decadenza.
-    FASE 2 (Capitale): da 'data_decadenza_effettiva' a 'data_fine'.
-        Mora sull'INTERO capitale residuo.
-
-    Entrambe le fasi passano per il filtro Art. 2855 c.c.
+    [...docstring invariata...]
     """
-    totale = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
+    totale = {
+        "ipotecario": 0.0,
+        "chirografario": 0.0,
+        "dettaglio": {},
+        # --- Contatore tripartizione Art. 2855 c.c. ---
+        "voci_2855": {
+            "pre_chiro": 0.0,
+            "triennio_ipo": 0.0,
+            "post_ipo": 0.0,
+            "post_chiro": 0.0,
+        },
+    }
 
     # ---------- FASE 1: rate scadute fino alla decadenza ----------
     rate_scadute = genera_rate_scadute(
@@ -195,6 +205,14 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         )
         totale["ipotecario"] += rip["ipotecario"]
         totale["chirografario"] += rip["chirografario"]
+
+        # --- Accumulo voci Art. 2855 c.c. anche per ogni rata ---
+        d = rip["dettaglio"]
+        totale["voci_2855"]["pre_chiro"]    += d.get("pre_triennio_chiro", 0.0)
+        totale["voci_2855"]["triennio_ipo"] += d.get("triennio_ipo_mora", 0.0)
+        totale["voci_2855"]["post_ipo"]     += d.get("post_ipo_legale", 0.0)
+        totale["voci_2855"]["post_chiro"]   += d.get("post_chiro_diff", 0.0)
+
         dettaglio_fase1["rate"][
             f"rata_{i+1}_({rata['data_scadenza'].strftime('%d/%m/%Y')})"
         ] = rip["dettaglio"]
