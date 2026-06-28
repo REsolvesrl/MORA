@@ -23,19 +23,14 @@ FREQUENZA_MESI = {
     "Semestrale": 6,
 }
 
-# Parametri forfettari spese esecutive (modificabili)
+# Parametri forfettari spese esecutive immobiliari (modificabili)
 SPESE_IMMOBILIARE = {
     "spese_vive": 800.0,        # CU, trascrizioni, note
-    "ctu": 3500.0,              # consulenza tecnica d'ufficio (aggiornato)
+    "ctu": 3500.0,              # consulenza tecnica d'ufficio
     "custode_delegato": 4000.0, # o 3% del valore se maggiore
     "perc_custode": 0.03,
-    "pubblicita": 1500.0,       # pubblicità sul PVP (aggiornato)
-    "spese_legali_nostre": 2600.0,  # NUOVA VOCE
-}
-SPESE_MOBILIARE = {
-    "spese_vive": 150.0,
-    "ufficiale_legali": 500.0,
-    "spese_legali_nostre": 2600.0,  # NUOVA VOCE
+    "pubblicita": 1500.0,       # pubblicità sul PVP
+    "spese_legali_nostre": 2600.0,
 }
 
 # Costi di acquisizione credito NPL (modificabili)
@@ -117,32 +112,32 @@ def calcola_triennio(data_stipula, data_pignoramento):
     return inizio_triennio, inizio_annata_corrente, fine_annata_corrente
 
 # ==========================================================
-# 4. RIPARTIZIONE IPOTECARIO / CHIROGRAFARIO (Art. 2855 c.c.)
-#    >>> CUORE UNICO DEL CALCOLO <<<
+# 4. RIPARTIZIONE CREDITO EX ART. 2855 c.c.
 # ==========================================================
 
 def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
                        data_stipula, data_pignoramento, data_fine):
     """
-    Filtro Art. 2855 c.c. applicato a una "voce" di interessi (rata o capitale).
-    Divide gli interessi in:
-    - PRE-TRIENNIO: chirografario @ tasso mora
-    - TRIENNIO: ipotecario @ tasso mora
-    - POST-TRIENNIO: ipotecario @ tasso legale + chirografario (differenza)
+    Ripartisce gli interessi di mora di un dato capitale tra
+    IPOTECARIO e CHIROGRAFARIO secondo le 3 fasi dell'art. 2855 c.c.:
+      - PRE-TRIENNIO : tutto chirografario (al tasso di mora)
+      - TRIENNIO     : ipotecario pieno (al tasso di mora)
+      - POST-TRIENNIO: ipotecario al tasso legale, eccedenza chirografaria
     """
-    inizio_triennio, inizio_annata_pign, fine_annata_pign = calcola_triennio(
+    risultato = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
+
+    inizio_triennio, _, fine_annata_pign = calcola_triennio(
         data_stipula, data_pignoramento
     )
 
-    risultato = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
-
     # --- PRE-TRIENNIO (chirografario @ mora) ---
-    if data_inizio_mora < inizio_triennio:
-        fine_pre = min(inizio_triennio, data_fine)
-        gg = giorni_tra(data_inizio_mora, fine_pre)
+    inizio_pre = data_inizio_mora
+    fine_pre = min(inizio_triennio, data_fine)
+    if fine_pre > inizio_pre:
+        gg = giorni_tra(inizio_pre, fine_pre)
         int_pre = interesse_semplice(capitale, tasso_mora, gg)
         risultato["chirografario"] += int_pre
-        risultato["dettaglio"]["pre_triennio_chiro"] = int_pre
+        risultato["dettaglio"]["pre_chiro_mora"] = int_pre
 
     # --- TRIENNIO (ipotecario @ mora) ---
     inizio_t = max(data_inizio_mora, inizio_triennio)
@@ -167,40 +162,25 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
 
     return risultato
 
-def _accumula(totale, parziale, chiave_dettaglio):
-    """Helper: somma un risultato parziale nel totale e registra il dettaglio.
-    Accumula inoltre le 4 voci della tripartizione ex art. 2855 c.c."""
-    totale["ipotecario"] += parziale["ipotecario"]
-    totale["chirografario"] += parziale["chirografario"]
-    totale["dettaglio"][chiave_dettaglio] = parziale["dettaglio"]
-
-    # --- Accumulo voci Art. 2855 c.c. ---
-    d = parziale["dettaglio"]
-    totale["voci_2855"]["pre_chiro"]    += d.get("pre_triennio_chiro", 0.0)
+def _accumula_voci_2855(totale, rip):
+    """Helper: accumula le 4 voci della tripartizione ex art. 2855 c.c."""
+    d = rip["dettaglio"]
+    totale["voci_2855"]["pre_chiro"] += d.get("pre_chiro_mora", 0.0)
     totale["voci_2855"]["triennio_ipo"] += d.get("triennio_ipo_mora", 0.0)
-    totale["voci_2855"]["post_ipo"]     += d.get("post_ipo_legale", 0.0)
-    totale["voci_2855"]["post_chiro"]   += d.get("post_chiro_diff", 0.0)
-    return totale
+    totale["voci_2855"]["post_ipo"] += d.get("post_ipo_legale", 0.0)
+    totale["voci_2855"]["post_chiro"] += d.get("post_chiro_diff", 0.0)
 
 # ==========================================================
-# 5. MOTORE UNIFICATO DI CALCOLO (CASO A e CASO B insieme)
+# 5. CALCOLO UNIFICATO (2 FASI)
 # ==========================================================
 
 def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            capitale_residuo, tasso_mora,
-                           data_decadenza_effettiva,
-                           data_stipula, data_pignoramento, data_fine):
+                           data_decadenza_effettiva, data_stipula,
+                           data_pignoramento, data_fine):
     """
-    MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
-    L'unica differenza tra i due casi è 'data_decadenza_effettiva':
-        - CASO A -> Data Lettera DBT
-        - CASO B -> Data Notifica Precetto
-
-    FASE 1 (Rate): da 'data_prima_rata' a 'data_decadenza_effettiva'.
-        Mora su ogni singola rata, dalla sua scadenza fino alla decadenza.
-    FASE 2 (Capitale): da 'data_decadenza_effettiva' a 'data_fine'.
-        Mora sull'INTERO capitale residuo.
-
+    FASE 1: ogni rata insoluta matura mora dalla scadenza fino alla decadenza.
+    FASE 2: il capitale residuo matura mora dalla decadenza fino a data_fine.
     Entrambe le fasi passano per il filtro Art. 2855 c.c.
     """
     totale = {
@@ -233,67 +213,61 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
             data_inizio_mora=rata["data_scadenza"],
             data_stipula=data_stipula,
             data_pignoramento=data_pignoramento,
-            data_fine=data_decadenza_effettiva   # <-- la rata corre fino alla decadenza
+            data_fine=data_decadenza_effettiva
         )
         totale["ipotecario"] += rip["ipotecario"]
         totale["chirografario"] += rip["chirografario"]
-
-        # --- Accumulo voci Art. 2855 c.c. anche per ogni rata ---
-        d = rip["dettaglio"]
-        totale["voci_2855"]["pre_chiro"]    += d.get("pre_triennio_chiro", 0.0)
-        totale["voci_2855"]["triennio_ipo"] += d.get("triennio_ipo_mora", 0.0)
-        totale["voci_2855"]["post_ipo"]     += d.get("post_ipo_legale", 0.0)
-        totale["voci_2855"]["post_chiro"]   += d.get("post_chiro_diff", 0.0)
-
-        dettaglio_fase1["rate"][
-            f"rata_{i+1}_({rata['data_scadenza'].strftime('%d/%m/%Y')})"
-        ] = rip["dettaglio"]
+        _accumula_voci_2855(totale, rip)
+        dettaglio_fase1["rate"][f"rata_{i+1}"] = {
+            "data_scadenza": rata["data_scadenza"].strftime("%d/%m/%Y"),
+            "importo": rata["importo"],
+            "ipotecario": rip["ipotecario"],
+            "chirografario": rip["chirografario"],
+            "dettaglio": rip["dettaglio"],
+        }
 
     totale["dettaglio"]["FASE_1_rate"] = dettaglio_fase1
 
-    # ---------- FASE 2: intero capitale residuo dalla decadenza ----------
-    rip_fase2 = ripartisci_credito(
+    # ---------- FASE 2: capitale residuo dalla decadenza a data_fine ----------
+    rip_cap = ripartisci_credito(
         capitale=capitale_residuo,
         tasso_mora=tasso_mora,
-        data_inizio_mora=data_decadenza_effettiva,  # <-- parte dalla decadenza
+        data_inizio_mora=data_decadenza_effettiva,
         data_stipula=data_stipula,
         data_pignoramento=data_pignoramento,
         data_fine=data_fine
     )
-    totale = _accumula(totale, rip_fase2, "FASE_2_capitale_residuo")
+    totale["ipotecario"] += rip_cap["ipotecario"]
+    totale["chirografario"] += rip_cap["chirografario"]
+    _accumula_voci_2855(totale, rip_cap)
+    totale["dettaglio"]["FASE_2_capitale"] = {
+        "capitale_residuo": capitale_residuo,
+        "ipotecario": rip_cap["ipotecario"],
+        "chirografario": rip_cap["chirografario"],
+        "dettaglio": rip_cap["dettaglio"],
+    }
 
     return totale
 
 # ==========================================================
-# 6. LOGICA SPESE ESECUTIVE (PREVISIONE COSTI FUTURI)
+# 6. STIMA SPESE ESECUTIVE (solo IMMOBILIARE)
 # ==========================================================
 
-def stima_spese_esecutive(tipo_procedura, valore_bene):
+def stima_spese_esecutive(valore_bene):
     """
-    Stima forfettaria dei costi di una procedura esecutiva.
+    Stima forfettaria dei costi di una procedura esecutiva immobiliare.
     Ritorna un dizionario con le singole voci e il totale.
     Valori indicativi: verificare sempre col foro competente.
     """
-    voci = {}
-
-    if tipo_procedura == "Pignoramento Immobiliare":
-        p = SPESE_IMMOBILIARE
-        custode = max(p["custode_delegato"], valore_bene * p["perc_custode"])
-        voci = {
-            "Spese vive (CU, trascrizioni, note)": p["spese_vive"],
-            "CTU (perizia di stima)": p["ctu"],
-            "Custode / Professionista delegato": custode,
-            "Pubblicità (PVP)": p["pubblicita"],
-            "Nostre spese legali": p["spese_legali_nostre"],
-        }
-    else:  # Mobiliare / Presso Terzi
-        p = SPESE_MOBILIARE
-        voci = {
-            "Spese vive (notifica, bolli)": p["spese_vive"],
-            "Ufficiale Giudiziario / Legali": p["ufficiale_legali"],
-            "Nostre spese legali": p["spese_legali_nostre"],
-        }
-
+    p = SPESE_IMMOBILIARE
+    custode = max(p["custode_delegato"], valore_bene * p["perc_custode"])
+    voci = {
+        "Spese vive (CU, trascrizioni, note)": p["spese_vive"],
+        "CTU (perizia di stima)": p["ctu"],
+        "Custode / Professionista delegato": custode,
+        "Pubblicità (PVP)": p["pubblicita"],
+        "Nostre spese legali": p["spese_legali_nostre"],
+    }
     totale = sum(voci.values())
     return voci, totale
 
@@ -338,62 +312,48 @@ st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semp
 with st.sidebar:
     st.header("Parametri generali")
     tasso_mora = st.number_input("Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1) / 100
-
-    st.divider()
-    st.subheader("Date comuni")
-    data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15),
-                                 format="DD/MM/YYYY")
-    data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
-                                      format="DD/MM/YYYY")
-    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today(),
-                              format="DD/MM/YYYY")
-
-    st.divider()
-    st.subheader("Evento di decadenza")
-    caso = st.radio(
-        "Quale atto ha generato la decadenza dal beneficio del termine?",
-        options=["CASO A – Lettera DBT", "CASO B – Notifica Precetto"],
-        index=0,
+    spese_legali = st.number_input(
+        "Spese legali del creditore (€)",
+        min_value=0.0, value=0.0, step=100.0,
+        help="Spese legali documentate richieste dal creditore (incluse nel totale)."
     )
-    is_caso_A = caso.startswith("CASO A")
 
-# ==========================================================
-# TAB PRINCIPALI
-# ==========================================================
 tab1, tab2, tab3 = st.tabs([
-    "📊 Auditing e Check GBV",
-    "🔮 Previsione Spese Esecutive",
-    "🤝 Acquisto Credito (NPL) e Stralcio",
+    "🔍 1. Auditing Credito",
+    "🔮 2. Previsione Spese Esecutive",
+    "💼 3. Negoziazione NPL",
 ])
 
 # ----------------------------------------------------------
-# TAB 1 — AUDITING E CHECK GBV
+# TAB 1 — AUDITING DEL CREDITO
 # ----------------------------------------------------------
 with tab1:
-    st.subheader("📋 Dati del piano e del credito")
+    st.subheader("📋 Dati del rapporto di credito")
+
     c1, c2, c3 = st.columns(3)
-    importo_rata = c1.number_input(
-        "Importo singola rata (€)",
-        min_value=0.0,
-        value=800.0,
-        step=50.0,
-        help="Inserire l'intero importo della rata scaduta (Quota Capitale + Quota Interessi)"
+    data_stipula = c1.date_input(
+        "📝 Data Stipula Mutuo", value=date(2015, 6, 1), format="DD/MM/YYYY",
+        help="Data dell'atto di mutuo (decorrenza annate ipotecarie)."
     )
-    data_prima_rata = c2.date_input("Data scadenza PRIMA rata insoluta",
-                                    value=date(2021, 3, 1),
-                                    format="DD/MM/YYYY")
-    frequenza = c3.selectbox("Frequenza rate",
-                             options=list(FREQUENZA_MESI.keys()), index=0)
+    data_pignoramento = c2.date_input(
+        "🔨 Data Pignoramento", value=date(2023, 6, 1), format="DD/MM/YYYY",
+        help="Data di trascrizione del pignoramento."
+    )
+    data_fine = c3.date_input(
+        "📆 Data Finale Calcolo (oggi)", value=date.today(), format="DD/MM/YYYY",
+        help="Data fino a cui calcolare il debito reale (negoziazione)."
+    )
 
     c4, c5 = st.columns(2)
     capitale_residuo = c4.number_input(
-        "Capitale Residuo cristallizzato (€)",
-        min_value=0.0,
-        value=100000.0,
-        step=1000.0,
-        help="Intero capitale esigibile alla data di decadenza/precetto. "
-             "Su questo importo decorre la mora dalla decadenza in poi. "
-             "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi."
+        "💶 Capitale Residuo (€)", min_value=0.0, value=100000.0, step=1000.0,
+        help="Capitale residuo alla data di decadenza."
+    )
+
+    is_caso_A = st.toggle(
+        "📩 È presente la Lettera di Decadenza dal Beneficio del Termine (DBT)?",
+        value=False,
+        help="Se attivo (CASO A) usa la data DBT. Se spento (CASO B) usa la notifica del precetto."
     )
 
     # ---- Campo dinamico in base al caso ----
@@ -412,7 +372,23 @@ with tab1:
             help="In assenza di DBT, la decadenza decorre dalla notifica del precetto."
         )
 
-      # ---- GBV dichiarato + voci secondarie ----
+    st.divider()
+    st.subheader("📅 Piano rate insolute")
+
+    r1, r2, r3 = st.columns(3)
+    importo_rata = r1.number_input(
+        "💸 Importo Rata (€)", min_value=0.0, value=1200.0, step=50.0
+    )
+    data_prima_rata = r2.date_input(
+        "📅 Data Prima Rata Non Pagata", value=date(2021, 6, 1), format="DD/MM/YYYY"
+    )
+    frequenza = r3.selectbox(
+        "🔁 Frequenza Rate", options=list(FREQUENZA_MESI.keys()), index=0
+    )
+
+    st.divider()
+
+    # ---- GBV dichiarato + voci secondarie ----
     gbv_dichiarato = st.number_input(
         "🏦 GBV Dichiarato dal Creditore (€)",
         min_value=0.0,
@@ -422,28 +398,15 @@ with tab1:
              "Lascia 0 per saltare il check di congruità."
     )
 
-    # 🆕 Data di attualizzazione del GBV (appare solo se GBV > 0)
+    # 🆕 Data di attualizzazione GBV (solo se GBV > 0)
+    data_attualizzazione_gbv = None
     if gbv_dichiarato > 0:
         data_attualizzazione_gbv = st.date_input(
-            "📅 Data di attualizzazione del GBV",
-            value=date(2022, 11, 6),
+            "📅 Data di attualizzazione del GBV (Atto di Precetto / Insinuazione)",
+            value=date(2023, 2, 1),
             format="DD/MM/YYYY",
-            help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
-                 "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
-                 "Il check di congruità userà QUESTA data per un confronto "
-                 "'mele con mele', evitando falsi allarmi di anatocismo."
-        )
-    else:
-        data_attualizzazione_gbv = None
-
-    # 🔗 Salvo il GBV per il Tab 3 (NPL)
-    st.session_state["gbv_dichiarato"] = gbv_dichiarato
-
-    with st.expander("➕ Aggiungi Spese Legali / Altro"):
-        spese_legali = st.number_input(
-            "⚖️ Spese legali / procedurali (€)",
-            min_value=0.0, value=0.0, step=100.0,
-            help="Spese di precetto, notifica, procedura esecutiva richieste in atto."
+            help="Data alla quale il creditore ha calcolato il GBV dichiarato. "
+                 "Serve per il confronto 'mele con mele'."
         )
 
     st.divider()
@@ -464,480 +427,311 @@ with tab1:
                        "di norma è successivo. Verificare.")
 
         etichetta = "CASO A (Lettera DBT)" if is_caso_A else "CASO B (Notifica Precetto)"
-        st.subheader(f"Modalità: {etichetta}")
-        st.caption(f"Data Decadenza Effettiva utilizzata: "
-                   f"**{data_decadenza_effettiva.strftime('%d/%m/%Y')}**")
+        st.info(f"📌 Modalità di calcolo selezionata: **{etichetta}**")
 
-        # ==========================================================
-        # 🔄 DOPPIO CALCOLO: Giro A (Check GBV) + Giro B (Attuale)
-        # ==========================================================
+        # ==================================================
+        # FUNZIONE INTERNA DI CALCOLO (riutilizzabile)
+        # ==================================================
+        def esegui_calcolo(data_finale_calcolo):
+            """Esegue il calcolo degli interessi di mora fino alla data indicata.
+            Ritorna un dict con capitale, interessi e dettaglio per anno."""
+            dettaglio_anni = []
+            interessi_totali = 0.0
 
-        # --- Parametri comuni ai due giri (tutto tranne data_fine) ---
-        params_comuni = dict(
-            importo_rata=importo_rata,
-            data_prima_rata=data_prima_rata,
-            frequenza=frequenza,
-            capitale_residuo=capitale_residuo,
-            tasso_mora=tasso_mora,
-            data_decadenza_effettiva=data_decadenza_effettiva,
-            data_stipula=data_stipula,
-            data_pignoramento=data_pignoramento,
-        )
+            anno_corrente = data_decadenza_effettiva.year
+            anno_finale = data_finale_calcolo.year
 
-        # --- GIRO B (CALCOLO ATTUALE): fino a data_fine (es. oggi) ---
-        # Alimenta le metriche principali e il Tab 3 (negoziazione).
-        risultato = calcola_mora_unificato(**params_comuni, data_fine=data_fine)
+            for anno in range(anno_corrente, anno_finale + 1):
+                # Tasso applicabile per l'anno (mora = legale + spread)
+                tasso_legale = TASSI_LEGALI.get(anno, TASSO_LEGALE_DEFAULT)
+                tasso_mora = tasso_legale + spread_mora
 
-        # --- GIRO A (CHECK GBV): fino alla data di attualizzazione del creditore ---
-        # Gira SOLO se è stato dichiarato un GBV, per il confronto "mele con mele".
+                # Intervallo di calcolo dentro l'anno
+                inizio = max(data_decadenza_effettiva, date(anno, 1, 1))
+                fine = min(data_finale_calcolo, date(anno, 12, 31))
+
+                if fine < inizio:
+                    continue
+
+                giorni = (fine - inizio).days + 1
+                giorni_anno = 366 if (anno % 4 == 0 and (anno % 100 != 0 or anno % 400 == 0)) else 365
+
+                interessi_anno = capitale_residuo * tasso_mora * giorni / giorni_anno
+                interessi_totali += interessi_anno
+
+                dettaglio_anni.append({
+                    "anno": anno,
+                    "giorni": giorni,
+                    "tasso_legale": tasso_legale,
+                    "tasso_mora": tasso_mora,
+                    "interessi": interessi_anno,
+                })
+
+            return {
+                "capitale": capitale_residuo,
+                "interessi": interessi_totali,
+                "totale": capitale_residuo + interessi_totali,
+                "dettaglio": dettaglio_anni,
+            }
+
+        # ==================================================
+        # GIRO 1 — CHECK GBV (alla data di attualizzazione)
+        # ==================================================
+        risultato_gbv = None
         if gbv_dichiarato > 0 and data_attualizzazione_gbv is not None:
-            # Coerenza: la data di attualizzazione non può precedere la decadenza
-            if data_attualizzazione_gbv < data_decadenza_effettiva:
-                st.error("⛔ La *Data di attualizzazione GBV* è precedente alla "
-                         "decadenza. Impossibile eseguire il check contabile.")
-                risultato_gbv = None
-            else:
-                risultato_gbv = calcola_mora_unificato(
-                    **params_comuni, data_fine=data_attualizzazione_gbv
-                )
-        else:
-            risultato_gbv = None
+            risultato_gbv = esegui_calcolo(data_attualizzazione_gbv)
 
-        # --- Metriche totali generali ---
-        # --- Avviso: queste metriche sono il calcolo ATTUALE (Giro B) ---
-        st.caption(
-            f"📈 I valori sottostanti sono il **debito reale stimato a oggi** "
-            f"(calcolo fino al **{data_fine.strftime('%d/%m/%Y')}**), utile per "
-            f"la **negoziazione**. Per la verifica contabile del GBV dichiarato "
-            f"vedi più in basso la sezione *Check GBV*."
-        )       
-        col1, col2 = st.columns(2)
-        col1.metric("🏛️ Credito IPOTECARIO", f"€ {risultato['ipotecario']:,.2f}")
-        col2.metric("📄 Credito CHIROGRAFARIO", f"€ {risultato['chirografario']:,.2f}")
+        # ==================================================
+        # GIRO 2 — CALCOLO ATTUALE (alla data finale scelta)
+        # ==================================================
+        risultato = esegui_calcolo(data_fine)
 
-        totale_gen = risultato['ipotecario'] + risultato['chirografario']
-        st.metric("💰 TOTALE interessi di mora", f"€ {totale_gen:,.2f}")
+        # ==================================================
+        # METRICHE PRINCIPALI
+        # ==================================================
+        st.subheader("📊 Risultato del calcolo")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("💰 Capitale residuo", f"€ {risultato['capitale']:,.2f}")
+        col2.metric("📈 Interessi di mora", f"€ {risultato['interessi']:,.2f}")
+        col3.metric("🧾 Totale dovuto", f"€ {risultato['totale']:,.2f}")
 
-        # --- Salvo i totali per il Tab 3 (NPL) ---
-        debito_totale = capitale_residuo + totale_gen + spese_legali
-        st.session_state["debito_totale"] = debito_totale
-        st.session_state["debito_dettaglio"] = {
-            "capitale": capitale_residuo,
-            "interessi": totale_gen,
-            "spese_legali": spese_legali,
-            "ipotecario": risultato["ipotecario"],
-            "chirografario": risultato["chirografario"],
-        }
-
-        # ==========================================================
-        # 🔎 CHECK GBV (AUDITING A COMPONENTI) — usa il GIRO A
-        # ==========================================================
-        if gbv_dichiarato > 0 and risultato_gbv is not None:
+        # ==================================================
+        # CHECK GBV — CONFRONTO "MELE CON MELE"
+        # ==================================================
+        if risultato_gbv is not None:
             st.divider()
-            st.subheader("🔎 Check GBV (Auditing a componenti)")
-            st.caption(
-                f"🍎 **Confronto 'mele con mele':** il nostro calcolo è qui fermato "
-                f"alla **{data_attualizzazione_gbv.strftime('%d/%m/%Y')}** "
-                f"(stessa data di attualizzazione del creditore), **non a oggi**. "
-                f"Così verifichiamo la correttezza contabile della banca *alla sua "
-                f"stessa data*, senza falsi positivi dovuti agli interessi maturati "
-                f"successivamente."
-            )
+            st.subheader("🔍 Check di congruità del GBV dichiarato")
 
-            # --- Componenti dal GIRO A (attualizzato alla data del creditore) ---
-            interessi_gbv = risultato_gbv['ipotecario'] + risultato_gbv['chirografario']
-            capitale_totale = capitale_residuo
-            interessi_totali = interessi_gbv
-            totale_calcolato = capitale_totale + interessi_totali + spese_legali
+            totale_nostro_gbv = risultato_gbv["totale"]
+            delta = gbv_dichiarato - totale_nostro_gbv
+            perc_scostamento = (delta / totale_nostro_gbv * 100) if totale_nostro_gbv > 0 else 0.0
 
-            # --- Riga 1: scomposizione delle componenti ---
-            a1, a2, a3 = st.columns(3)
-            a1.metric("🏦 Capitale", f"€ {capitale_totale:,.2f}")
-            a2.metric("⚖️ Spese Legali", f"€ {spese_legali:,.2f}")
-            a3.metric(
-                "📈 Interessi (ex Art. 2855)",
-                f"€ {interessi_totali:,.2f}",
-                help=f"Interessi di mora calcolati fino alla data di attualizzazione "
-                     f"del GBV ({data_attualizzazione_gbv.strftime('%d/%m/%Y')})."
-            )
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🏦 GBV Dichiarato", f"€ {gbv_dichiarato:,.2f}")
+            c2.metric("🧮 Nostro calcolo (stessa data)", f"€ {totale_nostro_gbv:,.2f}")
+            c3.metric("📐 Scostamento", f"€ {delta:,.2f}", f"{perc_scostamento:+.1f}%")
 
-            # --- Riga 2: confronto col GBV ---
-            b1, b2, b3 = st.columns(3)
-            b1.metric("🧮 TOTALE CALCOLATO", f"€ {totale_calcolato:,.2f}")
-            b2.metric("📑 GBV DICHIARATO", f"€ {gbv_dichiarato:,.2f}")
-
-            delta = gbv_dichiarato - totale_calcolato
-            b3.metric("📐 DELTA", f"€ {delta:,.2f}", delta_color="inverse")
-
-            # --- Alert semantico ---
-            SOGLIA = 10.0
-            if delta > SOGLIA:
-                st.error(
-                    f"🚨 **Anomalia:** il GBV dichiarato supera il totale calcolato "
-                    f"di € {delta:,.2f}. Possibile **anatocismo**, **estensione "
-                    f"ipotecaria indebita**, **tassi di mora non dovuti** o **spese "
-                    f"non documentate**. Verificare le voci in contestazione."
-                )
-            elif delta < -SOGLIA:
-                st.warning(
-                    f"ℹ️ Il totale calcolato supera il GBV dichiarato di "
-                    f"€ {abs(delta):,.2f}. Pretesa creditoria prudenziale "
-                    f"(a favore del debitore). Verificare comunque i dati."
-                )
+            if abs(perc_scostamento) <= 5:
+                st.success("✅ GBV CONGRUO: scostamento entro il 5%. Il dichiarato è in linea col calcolo.")
+            elif perc_scostamento > 5:
+                st.warning(f"⚠️ GBV GONFIATO: il creditore chiede € {delta:,.2f} in più "
+                           f"({perc_scostamento:+.1f}%) rispetto al calcolo analitico.")
             else:
-                st.success(
-                    f"✅ **GBV congruo:** importi allineati "
-                    f"(scarto € {abs(delta):,.2f} entro la soglia di € {SOGLIA:,.2f})."
-                )
+                st.info(f"ℹ️ GBV PRUDENTE: il dichiarato è inferiore al calcolo di € {abs(delta):,.2f} "
+                        f"({perc_scostamento:.1f}%).")
 
-            # --- 🆕 Riga 3: confronto temporale (debito alla data GBV vs a oggi) ---
-            interessi_oggi = risultato['ipotecario'] + risultato['chirografario']
-            totale_oggi = capitale_residuo + interessi_oggi + spese_legali
-            crescita = totale_oggi - totale_calcolato
-
-            # Stima crescita mensile media nel periodo intercorso
-            gg_intercorsi = (data_fine - data_attualizzazione_gbv).days
-            crescita_mensile = (crescita / gg_intercorsi * 30) if gg_intercorsi > 0 else 0.0
-
-            st.divider()
-            st.markdown("##### 📈 Dinamica del debito (chiave negoziale)")
-            t1, t2, t3 = st.columns(3)
-            t1.metric(
-                f"🗓️ Debito al {data_attualizzazione_gbv.strftime('%d/%m/%Y')}",
-                f"€ {totale_calcolato:,.2f}",
-                help="Totale ricostruito alla data di attualizzazione del creditore (Giro A)."
-            )
-            t2.metric(
-                f"📅 Debito al {data_fine.strftime('%d/%m/%Y')}",
-                f"€ {totale_oggi:,.2f}",
-                help="Totale reale stimato a oggi (Giro B), base per la negoziazione."
-            )
-            t3.metric(
-                "⏳ Interessi maturati nel frattempo",
-                f"€ {crescita:,.2f}",
-                delta=f"~ € {crescita_mensile:,.0f} / mese",
-                delta_color="inverse",
-                help=f"Crescita del debito nei {gg_intercorsi} giorni intercorsi "
-                     f"tra la data GBV e oggi."
-            )
-            st.caption(
-                f"💡 *Leva negoziale:* il debito cresce di circa "
-                f"**€ {crescita_mensile:,.0f}/mese**. Ogni mese di trattativa che passa "
-                f"aumenta l'esposizione: argomento utile per spingere verso una "
-                f"**chiusura rapida** dello stralcio."
-            )
-
-        # ==========================================================
-        # 📊 SPACCATO VISIVO TRIPARTIZIONE EX ART. 2855 c.c.
-        # ==========================================================
+        # ==================================================
+        # SPACCATO ART. 2855 c.c. (collocazione ipotecaria)
+        # ==================================================
         st.divider()
-        st.subheader("📊 Divisione ex Art. 2855 c.c.")
+        st.subheader("⚖️ Spaccato collocazione ipotecaria (Art. 2855 c.c.)")
+        st.caption("L'ipoteca garantisce il capitale, gli interessi dell'anno in corso "
+                   "e dei due anni precedenti al pignoramento, più gli interessi successivi "
+                   "al tasso legale fino alla vendita.")
 
-        v = risultato["voci_2855"]
-        fase1, fase2, fase3 = st.columns(3)
+        anno_pign = data_pignoramento.year
+        # Interessi nel "triennio protetto" (anno pign + 2 precedenti) restano a tasso mora
+        interessi_privilegiati = 0.0
+        interessi_chirografari = 0.0
+        for riga in risultato["dettaglio"]:
+            if riga["anno"] >= (anno_pign - 2):
+                interessi_privilegiati += riga["interessi"]
+            else:
+                interessi_chirografari += riga["interessi"]
 
-        with fase1:
-            st.info(
-                "**🔵 FASE 1 – PRE-TRIENNIO**\n\n"
-                "Interessi anteriori al triennio: **degradano interamente a "
-                "chirografario**, pur restando al tasso di mora.\n\n"
-                f"📄 Chirografario (mora):\n\n"
-                f"### € {v['pre_chiro']:,.2f}"
-            )
+        ipotecario = risultato["capitale"] + interessi_privilegiati
+        chirografario = interessi_chirografari
 
-        with fase2:
-            st.success(
-                "**🟢 FASE 2 – TRIENNIO**\n"
-                "Annata in corso + 2 precedenti: **garanzia ipotecaria piena** "
-                "al tasso di mora pattuito.\n\n"
-                f"🏛️ Ipotecario (mora):\n\n"
-                f"### € {v['triennio_ipo']:,.2f}"
-            )
+        cc1, cc2 = st.columns(2)
+        cc1.metric("🛡️ Credito IPOTECARIO (privilegiato)", f"€ {ipotecario:,.2f}")
+        cc2.metric("📉 Credito CHIROGRAFARIO (degradato)", f"€ {chirografario:,.2f}")
 
-        with fase3:
-            st.warning(
-                "**🟠 FASE 3 – POST-TRIENNIO**\n\n"
-                "Dopo l'annata del pignoramento la garanzia **degrada**: "
-                "resta ipotecaria solo la quota al **tasso legale**, "
-                "l'eccedenza diventa chirografaria.\n\n"
-                f"🏛️ Ipotecario (legale): **€ {v['post_ipo']:,.2f}**\n\n"
-                f"📄 Chirografario (eccedenza): **€ {v['post_chiro']:,.2f}**"
-            )
+        risultato["ipotecario"] = ipotecario
+        risultato["chirografario"] = chirografario
 
-        somma_voci = v['pre_chiro'] + v['triennio_ipo'] + v['post_ipo'] + v['post_chiro']
-        scarto = abs(somma_voci - totale_gen)
-        if scarto > 0.01:
-            st.error(f"⚠️ Scarto di quadratura: € {scarto:,.2f} — verificare la logica.")
+        # ==================================================
+        # QUADRATURA CONTABILE
+        # ==================================================
+        totale_gen = risultato["ipotecario"] + risultato["chirografario"]
+        st.divider()
+        st.subheader("✅ Quadratura contabile")
+        if abs(totale_gen - risultato["totale"]) < 0.01:
+            st.success(f"✅ Quadratura OK: Ipotecario + Chirografario = € {totale_gen:,.2f} "
+                       f"= Totale dovuto.")
         else:
-            st.caption("✅ Quadratura verificata: la somma delle 3 fasi coincide col totale.")
+            st.error(f"⛔ Errore di quadratura: somma spaccato € {totale_gen:,.2f} "
+                     f"≠ totale € {risultato['totale']:,.2f}")
 
-        n_rate = risultato["dettaglio"]["FASE_1_rate"]["numero_rate_generate"]
-        st.info(f"🔢 Rate insolute auto-generate (prima rata → decadenza): **{n_rate}**")
+        # ==================================================
+        # DETTAGLIO ANNUALE (EXPANDER)
+        # ==================================================
+        with st.expander("📅 Mostra dettaglio interessi anno per anno"):
+            st.dataframe(
+                [
+                    {
+                        "Anno": r["anno"],
+                        "Giorni": r["giorni"],
+                        "Tasso Legale": f"{r['tasso_legale']*100:.2f}%",
+                        "Tasso Mora": f"{r['tasso_mora']*100:.2f}%",
+                        "Interessi €": round(r["interessi"], 2),
+                    }
+                    for r in risultato["dettaglio"]
+                ],
+                use_container_width=True,
+            )
 
-        with st.expander("🔍 Dettaglio calcolo (dati grezzi)"):
-            st.json(risultato['dettaglio'])
-
-# ----------------------------------------------------------
-# TAB 2 — PREVISIONE SPESE ESECUTIVE (consulenza strategica)
-# ----------------------------------------------------------
+# ==========================================================
+# TAB 2 — STIMA SPESE ESECUTIVE IMMOBILIARI
+# ==========================================================
 with tab2:
-    st.subheader("🔮 Stima dei costi di una procedura esecutiva")
-    st.caption("Proiezione forfettaria dei costi futuri se il creditore prosegue "
-               "con l'esecuzione. Valori indicativi: verificare col foro competente.")
+    st.header("🏠 Stima Spese della Procedura Esecutiva Immobiliare")
+    st.caption("Voci forfettarie da anticipare nel pignoramento immobiliare. "
+               "Modificabili secondo il caso concreto.")
 
-    p1, p2 = st.columns(2)
-    tipo_procedura = p1.selectbox(
-        "Tipo di procedura",
-        options=["Pignoramento Immobiliare", "Pignoramento Mobiliare", "Pignoramento Presso Terzi"],
-        index=0,
+    valore_immobile = st.number_input(
+        "🏡 Valore di perizia dell'immobile (€)",
+        min_value=0.0, value=100000.0, step=5000.0,
+        help="Valore base d'asta / stima CTU. Serve per calcolare il compenso del custode."
     )
-    valore_bene = p2.number_input(
-        "Valore stimato dell'immobile / bene (€)",
-        min_value=0.0,
-        value=120000.0,
-        step=5000.0,
-        help="Valore di mercato/perizia. Per l'immobiliare incide sul compenso "
-             "del custode/delegato (maggiore tra forfait e 3%)."
-    )
-
-    # Salvo valore_bene per il Tab 3
-    st.session_state["valore_bene"] = valore_bene
 
     st.divider()
+    st.subheader("💸 Voci di spesa")
 
-    # ============================================================
-    # VOCI MODIFICABILI — Immobiliare
-    # ============================================================
-    if tipo_procedura == "Pignoramento Immobiliare":
-        st.markdown("#### 📑 Voci modificabili – *Pignoramento Immobiliare*")
+    spese_vive = st.number_input("📄 Spese vive (CU, trascrizioni, note)", 
+                                  min_value=0.0, value=SPESE_IMMOBILIARE["spese_vive"], step=100.0)
+    ctu = st.number_input("👷 Compenso CTU (perito)", 
+                          min_value=0.0, value=SPESE_IMMOBILIARE["ctu"], step=100.0)
+    pubblicita = st.number_input("📢 Pubblicità sul PVP", 
+                                 min_value=0.0, value=SPESE_IMMOBILIARE["pubblicita"], step=100.0)
+    spese_legali = st.number_input("⚖️ Spese legali di procedura", 
+                                   min_value=0.0, value=SPESE_IMMOBILIARE["spese_legali_nostre"], step=100.0)
 
-        r1, r2 = st.columns(2)
-        spese_vive_val = r1.number_input(
-            "Spese vive (CU = Contributo Unificato, trascrizioni, ecc.)",
-            min_value=0.0, value=float(SPESE_IMMOBILIARE["spese_vive"]),
-            step=50.0, format="%.2f"
-        )
-        ctu_val = r2.number_input(
-            "CTU (perizia di stima)",
-            min_value=0.0, value=float(SPESE_IMMOBILIARE["ctu"]),
-            step=50.0, format="%.2f"
-        )
-
-        r3, r4 = st.columns(2)
-        custode_forfait = SPESE_IMMOBILIARE["custode_delegato"]
-        custode_pct = valore_bene * SPESE_IMMOBILIARE["perc_custode"]
-        custode_default = max(custode_forfait, custode_pct)
-
-        custode_val = r3.number_input(
-            "Custode / Professionista delegato",
-            min_value=0.0, value=float(custode_default),
-            step=50.0, format="%.2f",
-            help=f"Forfait: € {custode_forfait:,.2f} | 3% del valore: "
-                 f"€ {custode_pct:,.2f} | Default: € {custode_default:,.2f}"
-        )
-        pubblicita_val = r4.number_input(
-            "Pubblicità asta (PVP)",
-            min_value=0.0, value=float(SPESE_IMMOBILIARE["pubblicita"]),
-            step=50.0, format="%.2f"
-        )
-
-        r5, r6 = st.columns(2)
-        spese_legali_nostre_val = r5.number_input(
-            "Nostre spese legali",
-            min_value=0.0, value=float(SPESE_IMMOBILIARE["spese_legali_nostre"]),
-            step=50.0, format="%.2f"
-        )
-
-        # Placeholder per allineamento grafico
-        r6.markdown("&nbsp;")
-
-        totale_spese = spese_vive_val + ctu_val + custode_val + pubblicita_val + spese_legali_nostre_val
-        st.session_state["spese_future"] = totale_spese
-
-    # ============================================================
-    # VOCI MODIFICABILI — Mobiliare / Presso Terzi
-    # ============================================================
-    else:
-        st.markdown("#### 📑 Voci modificabili – *Pignoramento Mobiliare / Presso Terzi*")
-
-        r1, r2 = st.columns(2)
-        spese_vive_val = r1.number_input(
-            "Spese vive (notifica, bolli)",
-            min_value=0.0, value=float(SPESE_MOBILIARE["spese_vive"]),
-            step=50.0, format="%.2f"
-        )
-        uff_legali_val = r2.number_input(
-            "Ufficiale Giudiziario / Legali",
-            min_value=0.0, value=float(SPESE_MOBILIARE["ufficiale_legali"]),
-            step=50.0, format="%.2f"
-        )
-
-        r3, r4 = st.columns(2)
-        spese_legali_nostre_val = r3.number_input(
-            "Nostre spese legali",
-            min_value=0.0, value=float(SPESE_MOBILIARE["spese_legali_nostre"]),
-            step=50.0, format="%.2f"
-        )
-        r4.markdown("&nbsp;")
-
-        totale_spese = spese_vive_val + uff_legali_val + spese_legali_nostre_val
-        st.session_state["spese_future"] = totale_spese
+    # Custode delegato: max tra forfait e % del valore
+    custode_forfait = SPESE_IMMOBILIARE["custode_delegato"]
+    custode_perc = valore_immobile * SPESE_IMMOBILIARE["perc_custode"]
+    custode_delegato = max(custode_forfait, custode_perc)
+    st.number_input("🔑 Custode/Delegato alla vendita (calcolato)", 
+                    min_value=0.0, value=custode_delegato, step=100.0, disabled=True,
+                    help=f"Max tra forfait € {custode_forfait:,.0f} e "
+                         f"{SPESE_IMMOBILIARE['perc_custode']*100:.0f}% del valore "
+                         f"(€ {custode_perc:,.0f})")
 
     st.divider()
-    st.metric("💸 TOTALE SPESE ESECUTIVE STIMATE", f"€ {totale_spese:,.2f}")
+    totale_spese_esec = spese_vive + ctu + pubblicita + spese_legali + custode_delegato
+    st.metric("🧾 TOTALE SPESE ESECUTIVE STIMATE", f"€ {totale_spese_esec:,.2f}")
 
-    st.info(
-        f"⚠️ **Attenzione:** proseguendo con la procedura, il debito aumenterà di "
-        f"circa **€ {totale_spese:,.2f}**, riducendo il ricavato netto della vendita. "
-        f"Questi costi sono in **prededuzione** (art. 2770 c.c.) e vengono soddisfatti "
-        f"con priorità sul ricavato, prima ancora del creditore ipotecario."
-    )
+    st.info("ℹ️ Queste spese sono prededucibili ex art. 2770 c.c. e vengono "
+            "recuperate con priorità sul ricavato dell'asta.")
 
-    if tipo_procedura == "Pignoramento Immobiliare" and valore_bene > 0:
-        incidenza = (totale_spese / valore_bene) * 100
-        st.caption(f"📉 Incidenza delle spese sul valore del bene: **{incidenza:.1f}%**")
-
-# ----------------------------------------------------------
-# TAB 3 — ACQUISTO CREDITO NPL E STRALCIO
-# ----------------------------------------------------------
+# ==========================================================
+# TAB 3 — BUSINESS PLAN ACQUISIZIONE NPL
+# ==========================================================
 with tab3:
-    st.subheader("🤝 Acquisto Credito (NPL) e Stralcio")
-    st.caption("Logica waterfall per l'investitore che acquista credito deteriorato. "
-               "Simula l'offerta target partendo dal GBV.")
+    st.header("📈 Business Plan Acquisizione Credito NPL")
+    st.caption("Analisi di convenienza per l'acquisto del credito deteriorato. "
+               "Calcola il prezzo massimo d'acquisto per ottenere il rendimento target.")
 
-    # --- Recupero dati dagli altri tab ---
-    gbv = st.session_state.get("gbv_dichiarato", 0.0)
-    debito = st.session_state.get("debito_totale", 0.0)
-    spese_procedura = st.session_state.get("spese_future", 0.0)
-
-    # --- GBV base (priorità: GBV > 0 altrimenti debito) ---
-    gbv_base = gbv if gbv > 0 else debito
-    fonte_gbv = "GBV Dichiarato (Tab 1)" if gbv > 0 else "Debito Totale (Tab 1)"
-
-    if gbv_base <= 0:
-        st.info(
-            "⚠️ **Dati non disponibili.** "
-            "Esegui prima il **Tab 1 (Auditing)** e poi il "
-            "**Tab 2 (Previsione Spese Esecutive)** per popolare "
-            "le variabili di calcolo."
+    # Recupero dati dai tab precedenti (con fallback)
+    try:
+        gbv_recuperabile = risultato["totale"]
+    except (NameError, KeyError):
+        gbv_recuperabile = st.number_input(
+            "💰 GBV / Credito recuperabile (€)",
+            min_value=0.0, value=150000.0, step=5000.0,
+            help="Esegui prima il calcolo nel Tab 1 oppure inseriscilo qui manualmente."
         )
-        st.stop()
 
-    r1, r2, r3 = st.columns(3)
-    r1.metric("🏦 GBV Partenza", f"€ {gbv_base:,.2f}", help=f"Fonte: {fonte_gbv}")
-    r2.metric("💸 Spese Procedura (Tab 2)", f"€ {spese_procedura:,.2f}")
-    r3.metric("💰 Debito Totale (Tab 1)", f"€ {debito:,.2f}")
+    try:
+        spese_procedura = totale_spese_esec
+    except NameError:
+        spese_procedura = 0.0
+
+    st.divider()
+    st.subheader("🎯 Parametri di investimento")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        prob_recupero = st.slider(
+            "📊 Probabilità di recupero (%)", 
+            min_value=0, max_value=100, value=70, step=5,
+            help="Stima prudenziale della quota di GBV effettivamente incassabile."
+        ) / 100.0
+
+        tempo_recupero = st.number_input(
+            "⏱️ Tempo stimato di recupero (anni)", 
+            min_value=0.5, max_value=15.0, value=4.0, step=0.5
+        )
+
+    with col2:
+        rendimento_target = st.slider(
+            "🎯 Rendimento annuo target (IRR %)", 
+            min_value=0, max_value=50, value=15, step=1,
+            help="Tasso di rendimento annuo desiderato sull'investimento."
+        ) / 100.0
+
+    st.divider()
+    st.subheader("💼 Costi di acquisizione")
+
+    fronting = st.number_input("🏦 Fronting", min_value=0.0, 
+                               value=COSTI_ACQUISIZIONE["fronting"], step=500.0)
+    notaio = st.number_input("📜 Notaio", min_value=0.0, 
+                             value=COSTI_ACQUISIZIONE["notaio"], step=500.0)
+    servicer = st.number_input("🛠️ Servicer", min_value=0.0, 
+                               value=COSTI_ACQUISIZIONE["servicer"], step=500.0)
+    advisors = st.number_input("👔 Advisors", min_value=0.0, 
+                               value=COSTI_ACQUISIZIONE["advisors"], step=500.0)
+
+    costi_acquisizione_tot = fronting + notaio + servicer + advisors
+
+    st.divider()
+    st.subheader("📐 Risultato dell'analisi")
+
+    # Incasso atteso = GBV * probabilità di recupero
+    incasso_atteso = gbv_recuperabile * prob_recupero
+    # Incasso netto = incasso atteso - spese procedura
+    incasso_netto = incasso_atteso - spese_procedura
+    # Valore attuale scontato al rendimento target
+    valore_attuale = incasso_netto / ((1 + rendimento_target) ** tempo_recupero)
+    # Prezzo massimo d'acquisto = valore attuale - costi di acquisizione
+    prezzo_max_acquisto = valore_attuale - costi_acquisizione_tot
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("💵 Incasso atteso (lordo)", f"€ {incasso_atteso:,.2f}")
+    m2.metric("🧾 Incasso netto spese", f"€ {incasso_netto:,.2f}")
+    m3.metric("⏳ Valore attuale scontato", f"€ {valore_attuale:,.2f}")
 
     st.divider()
 
-    # ============================================================
-    # SEZIONE: COSTI DI ACQUISIZIONE CREDITO (modificabili)
-    # ============================================================
-    st.markdown("#### 💼 Costi di Acquisizione Credito (modificabili)")
+    # ==================================================
+    # WATERFALL DI CONVENIENZA
+    # ==================================================
+    st.subheader("💧 Waterfall di convenienza")
+    st.markdown(f"""
+    | Voce | Importo |
+    |------|--------:|
+    | 🏦 GBV / Credito recuperabile | € {gbv_recuperabile:,.2f} |
+    | 📊 × Probabilità recupero ({prob_recupero*100:.0f}%) | € {incasso_atteso:,.2f} |
+    | ➖ Spese procedura esecutiva | € {spese_procedura:,.2f} |
+    | 🧾 = Incasso netto | € {incasso_netto:,.2f} |
+    | ⏳ ÷ Sconto finanziario ({rendimento_target*100:.0f}% × {tempo_recupero} anni) | € {valore_attuale:,.2f} |
+    | 💼 ➖ Costi di acquisizione | € {costi_acquisizione_tot:,.2f} |
+    | **🎯 = PREZZO MASSIMO D'ACQUISTO** | **€ {prezzo_max_acquisto:,.2f}** |
+    """)
 
-    a1, a2, a3, a4 = st.columns(4)
-    fronting_val = a1.number_input(
-        "Fronting (€)",
-        min_value=0.0, value=float(COSTI_ACQUISIZIONE["fronting"]),
-        step=100.0, format="%.2f",
-        help="Corrispettivo per l'apertura della linea di credito / garanzia."
-    )
-    notaio_val = a2.number_input(
-        "Notaio (€)",
-        min_value=0.0, value=float(COSTI_ACQUISIZIONE["notaio"]),
-        step=100.0, format="%.2f",
-        help="Formalizzazione dell'atto di cessione del credito."
-    )
-    servicer_val = a3.number_input(
-        "Gestore credito / Servicer (€)",
-        min_value=0.0, value=float(COSTI_ACQUISIZIONE["servicer"]),
-        step=100.0, format="%.2f",
-        help="Compenso del servicer per la gestione del credito acquistato."
-    )
-    advisors_val = a4.number_input(
-        "Advisors (Legali/Tecnici) (€)",
-        min_value=0.0, value=float(COSTI_ACQUISIZIONE["advisors"]),
-        step=100.0, format="%.2f",
-        help="Consulenza legale, due diligence e supporto tecnico."
-    )
-
-    costi_acquisizione = fronting_val + notaio_val + servicer_val + advisors_val
-    totale_spese_fisse = spese_procedura + costi_acquisizione
-
-    st.caption(f"💼 Costi Acquisizione: **€ {costi_acquisizione:,.2f}** | "
-               f"📋 Totale Spese Fisse (procedura + acquisizione): **€ {totale_spese_fisse:,.2f}**")
-
-    st.divider()
-
-    # ============================================================
-    # SLIDER MARGINE DI TRATTAZIVA
-    # ============================================================
-    st.markdown("#### 🎯 Margine di Trattativa / Sconto")
-    margine = st.slider(
-        "Margine di trattativa / sconto (%)",
-        min_value=0, max_value=60, value=20, step=1,
-        help="Percentuale di sconto applicata alla base netta per ottenere "
-             "l'offerta target. Default 20% (soglia indicativa NPL)."
-    ) / 100.0
-
-    # ============================================================
-    # WATERFALL NPL
-    # ============================================================
-    base_netta = gbv_base - totale_spese_fisse
-    importo_margine = base_netta * margine
-    offerta_target = base_netta * (1 - margine)
-
-    st.markdown("#### 📊 Waterfall – Dal GBV all'Offerta Target")
-
-    w1, w2, w3, w4 = st.columns(4)
-    w1.metric("🏦 GBV Partenza", f"€ {gbv_base:,.2f}")
-    w2.metric("− Totale Spese Fisse", f"€ {totale_spese_fisse:,.2f}",
-              help="Spese procedura + costi di acquisizione")
-    w3.metric("= Base Netta pre-margine", f"€ {base_netta:,.2f}")
-    w4.metric("− Margine (%)", f"{margine*100:.0f}%")
-
-    st.divider()
-
-    delta_pct_gbv = ((offerta_target / gbv_base) * 100) if gbv_base > 0 else 0
-    st.metric(
-        "🎯 OFFERTA TARGET (Servicer)",
-        f"€ {offerta_target:,.2f}",
-        delta=f"{delta_pct_gbv:.1f}% del GBV",
-        delta_color="normal"
-    )
-
-    # --- Messaggi di stato ---
-    if offerta_target <= 0:
-        st.error(
-            f"🚨 **Offerta target negativa o nulla (€ {offerta_target:,.2f}).** "
-            f"Le spese fisse (€ {totale_spese_fisse:,.2f}) superano o eguagliano il GBV "
-            f"(€ {gbv_base:,.2f}). L'operazione NPL **non è sostenibile** con questi "
-            f"parametri. Rivedere: (a) soglia di ribasso, (b) costi di acquisizione, "
-            f"(c) stima del GBV."
-        )
-    elif offerta_target >= gbv_base:
-        st.warning(
-            f"⚠️ **Offerta target >= GBV (€ {offerta_target:,.2f}).** "
-            f"Questo scenario è **non realistico**: nessun investitore NPL "
-            f"acquista un credito senza sconto. Verificare le spese fisse "
-            f"o ricalcolare il GBV."
-        )
+    if prezzo_max_acquisto > 0:
+        perc_su_gbv = (prezzo_max_acquisto / gbv_recuperabile * 100) if gbv_recuperabile > 0 else 0
+        st.success(f"✅ Prezzo massimo d'acquisto: **€ {prezzo_max_acquisto:,.2f}** "
+                   f"({perc_su_gbv:.1f}% del GBV) per ottenere un IRR del {rendimento_target*100:.0f}%.")
     else:
-        st.success(
-            f"✅ **Operazione sostenibile.** Offerta target: "
-            f"**€ {offerta_target:,.2f}** ({(1-margine)*100:.0f}% del GBV, "
-            f"margine investitore: {margine*100:.0f}%). "
-            f"Base netta disponibile: € {base_netta:,.2f}."
-        )
+        st.error(f"⛔ Investimento NON conveniente: a queste condizioni il prezzo massimo "
+                 f"sarebbe negativo (€ {prezzo_max_acquisto:,.2f}). "
+                 f"Rivedere probabilità di recupero, tempi o rendimento target.")
 
-    # ============================================================
-    # GRAFICO WATERFALL
-    # ============================================================
-    st.markdown("##### 📈 Waterfall Chart")
-    st.bar_chart({
-        "Valore (€)": {
-            "GBV partenza": gbv_base,
-            "Base netta": base_netta,
-            "Offerta Target": offerta_target,
-        }
-    })
+# ==========================================================
+# FOOTER
+# ==========================================================
+st.divider()
+st.caption("⚠️ Strumento di supporto all'analisi. I calcoli sono indicativi e non "
+           "sostituiscono la consulenza legale/fiscale professionale. "
+           "Verificare sempre tassi, date e voci di spesa nel caso concreto.")
+
