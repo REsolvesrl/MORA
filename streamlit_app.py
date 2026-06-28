@@ -345,7 +345,7 @@ with st.sidebar:
                                  format="DD/MM/YYYY")
     data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
                                       format="DD/MM/YYYY")
-    data_fine = st.date_input("Data fine calcolo (Attualizzazione desiderata)", value=date.today(),
+    data_fine = st.date_input("Data fine calcolo (Decreto Trasf.)", value=date.today(),
                               format="DD/MM/YYYY")
 
     st.divider()
@@ -387,14 +387,13 @@ with tab1:
 
     c4, c5 = st.columns(2)
     capitale_residuo = c4.number_input(
-        "Capitale Residuo all'ultima rata pagata (€)",
+        "Capitale Residuo cristallizzato (€)",
         min_value=0.0,
         value=100000.0,
         step=1000.0,
         help="Intero capitale esigibile alla data di decadenza/precetto. "
              "Su questo importo decorre la mora dalla decadenza in poi. "
              "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi."
-             "Verificare piano di ammortamento."
     )
 
     # ---- Campo dinamico in base al caso ----
@@ -415,11 +414,11 @@ with tab1:
 
     # ---- GBV dichiarato + voci secondarie ----
     gbv_dichiarato = st.number_input(
-        "🏦 GBV Dichiarato dalla Cedente (€)",
+        "🏦 GBV Dichiarato dal Creditore (€)",
         min_value=0.0,
         value=0.0,
         step=1000.0,
-        help="Importo complessivo (Gross Book Value) richiesto dalla banca/cedente. "
+        help="Importo complessivo (Gross Book Value) richiesto dalla banca/cessionario. "
              "Lascia 0 per saltare il check di congruità."
     )
 
@@ -432,7 +431,7 @@ with tab1:
             help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
                  "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
                  "Il check di congruità userà QUESTA data per un confronto "
-                 "'alla pari', evitando falsi allarmi di anatocismo."
+                 "'mele con mele', evitando falsi allarmi di anatocismo."
         )
     else:
         data_attualizzazione_gbv = None
@@ -442,7 +441,7 @@ with tab1:
 
     with st.expander("➕ Aggiungi Spese Legali / Altro"):
         spese_legali = st.number_input(
-            "⚖️ Spese legali sostenute dal creditore / procedurali (€)",
+            "⚖️ Spese legali / procedurali (€)",
             min_value=0.0, value=0.0, step=100.0,
             help="Spese di precetto, notifica, procedura esecutiva richieste in atto."
         )
@@ -501,7 +500,7 @@ with tab1:
                 st.caption(
                     "🔒 **Giro A** — Calcolo 'congelato' alla data di "
                     "attualizzazione del GBV per confronto contabile "
-                    "'alla pari'."
+                    "'mele con mele'."
                 )
                 risultato_gbv = calcola_mora_unificato(
                     **params_comuni, data_fine=data_attualizzazione_gbv
@@ -533,7 +532,7 @@ with tab1:
             st.divider()
             st.subheader("🔎 Check GBV (Auditing a componenti)")
             st.caption(
-                "Confronto 'alla pari': il GBV dichiarato viene paragonato al "
+                "Confronto 'mele con mele': il GBV dichiarato viene paragonato al "
                 "nostro calcolo congelato alla **stessa data di attualizzazione** "
                 f"(**{data_attualizzazione_gbv.strftime('%d/%m/%Y')}**), non a oggi."
             )
@@ -752,13 +751,13 @@ with tab3:
                "Simula l'offerta target partendo dal GBV.")
 
     # --- Recupero dati dagli altri tab ---
+    gbv = st.session_state.get("gbv_dichiarato", 0.0)
     debito = st.session_state.get("debito_totale", 0.0)
     spese_procedura = st.session_state.get("spese_future", 0.0)
 
-    # --- GBV base: usiamo sempre il debito totale calcolato a OGGI ---
-    # Ignoriamo il GBV dichiarato dal creditore perché obsoleto ai fini dell'offerta NPL
-    gbv_base = debito
-    fonte_gbv = "Debito Totale Ricalcolato a Oggi (Tab 1)"
+    # --- GBV base (priorità: GBV > 0 altrimenti debito) ---
+    gbv_base = gbv if gbv > 0 else debito
+    fonte_gbv = "GBV Dichiarato (Tab 1)" if gbv > 0 else "Debito Totale (Tab 1)"
 
     if gbv_base <= 0:
         st.info(
@@ -779,7 +778,7 @@ with tab3:
     # ============================================================
     # SEZIONE: COSTI DI ACQUISIZIONE CREDITO (modificabili)
     # ============================================================
-    st.markdown("#### 💼 Costi di Acquisizione Credito")
+    st.markdown("#### 💼 Costi di Acquisizione Credito (modificabili)")
 
     a1, a2, a3, a4 = st.columns(4)
     fronting_val = a1.number_input(
@@ -795,13 +794,13 @@ with tab3:
         help="Formalizzazione dell'atto di cessione del credito."
     )
     servicer_val = a3.number_input(
-        "Gestore credito (€)",
+        "Gestore credito / Servicer (€)",
         min_value=0.0, value=float(COSTI_ACQUISIZIONE["servicer"]),
         step=100.0, format="%.2f",
         help="Compenso del servicer per la gestione del credito acquistato."
     )
     advisors_val = a4.number_input(
-        "Advisors (€)",
+        "Advisors (Legali/Tecnici) (€)",
         min_value=0.0, value=float(COSTI_ACQUISIZIONE["advisors"]),
         step=100.0, format="%.2f",
         help="Consulenza legale, due diligence e supporto tecnico."
@@ -838,9 +837,9 @@ with tab3:
     w1, w2, w3, w4 = st.columns(4)
     w1.metric("🏦 GBV Partenza", f"€ {gbv_base:,.2f}")
     w2.metric("− Totale Spese Fisse", f"€ {totale_spese_fisse:,.2f}",
-              help="Spese procedura + costi di acquisizione (sopra)")
-    w3.metric("= Base Netta pre-sconto", f"€ {base_netta:,.2f}")
-    w4.metric("− Sconto trattativa (%)", f"{margine*100:.0f}%")
+              help="Spese procedura + costi di acquisizione")
+    w3.metric("= Base Netta pre-margine", f"€ {base_netta:,.2f}")
+    w4.metric("− Margine (%)", f"{margine*100:.0f}%")
 
     st.divider()
 
