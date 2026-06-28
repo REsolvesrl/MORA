@@ -364,7 +364,7 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs([
     "📊 Auditing e Check GBV",
     "🔮 Previsione Spese Esecutive",
-    "🤝 Acquisto Credito (NPL) e Stralcio",
+    "🤝 Acquisto Credito e DPO",
 ])
 
 # ----------------------------------------------------------
