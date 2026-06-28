@@ -525,8 +525,13 @@ with tab1:
         # FASE 1: somma degli interessi rata per rata (chiavi ipotecario/chirografario
         #         vivono nei dict delle singole rate dentro dettaglio["FASE_1_rate"]["rate"])
         fase1_rate_dict = det.get("FASE_1_rate", {}).get("rate", {})
+        def _voci_rata(dr):
+            ipot = dr.get("triennio_ipo_mora", 0.0) + dr.get("post_ipo_legale", 0.0)
+            chiro = dr.get("pre_triennio_chiro", 0.0) + dr.get("post_chiro_diff", 0.0)
+            return ipot, chiro
+
         fase1_interessi = sum(
-            r.get("ipotecario", 0.0) + r.get("chirografario", 0.0)
+            sum(_voci_rata(r))
             for r in fase1_rate_dict.values()
         )
         n_rate = det.get("FASE_1_rate", {}).get("numero_rate_generate", 0)
@@ -552,25 +557,27 @@ with tab1:
                     "**Formula:**  "
                     "`Quota capitale rata × Tasso di mora × Giorni di ritardo / 365`"
                 )
+                base_rate_scadute = n_rate * importo_rata
                 st.markdown(
                     f"- **Fase 1:** Mora calcolata rata per rata, "
                     f"dalla scadenza di ciascuna rata fino alla **decadenza** "
                     f"({data_decadenza_effettiva.strftime('%d/%m/%Y')}).\n"
                     f"- **N° rate scadute:** {n_rate}\n"
                     f"- **Quota capitale rate scadute:** "
-                    f"€ {capitale_residuo:,.2f}\n"
+                    f"€ {base_rate_scadute:,.2f}\n"
                     f"- **Tasso di mora:** {tasso_mora*100:.2f}% (pattuito)\n"
                     f"- **Convenzione giorni:** /365\n"
                     f"- **Interessi rate scadute → 🅰️ = € {fase1_interessi:,.2f}**"
                 )
                 with st.expander("📋 Dettaglio rata per rata"):
                     for chiave_rata, dettaglio_rata in fase1_rate_dict.items():
-                        ipot_r = dettaglio_rata.get("ipotecario", 0.0)
-                        chiro_r = dettaglio_rata.get("chirografario", 0.0)
+                        ipot_r, chiro_r = _voci_rata(dettaglio_rata)
+                        tot_r = ipot_r + chiro_r
                         st.markdown(
                             f"- **{chiave_rata}:** "
                             f"ipotecario € {ipot_r:,.2f} + "
                             f"chirografario € {chiro_r:,.2f}"
+                            f" (totale € {tot_r:,.2f})"
                         )
 
             with f2_col:
