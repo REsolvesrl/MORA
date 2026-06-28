@@ -517,74 +517,93 @@ with tab1:
         st.metric("💰 TOTALE interessi di mora", f"€ {totale_gen:,.2f}")
 
         # ==========================================================
-        # DETTAGLIO TRASPARENTE DEL CALCOLO INTERESSI (didattico)
+        # 📊 DETTAGLIO DEL CALCOLO INTERESSI (didattico — FASE 1 + FASE 2)
         # ==========================================================
-        with st.expander("\U0001f50d Dettaglio Calcolo Interessi"):
+        det = risultato["dettaglio"]
 
-            fase1_keys = risultato["dettaglio"]["FASE_1_rate"]["rate"]
-            fase1_interessi = sum(
-                r["ipotecario"] + r["chirografario"]
-                for r in fase1_keys.values()
+        # --- Ricostruzione fase1 / fase2 dai dati disponibili ---
+        # FASE 1: somma degli interessi rata per rata (chiavi ipotecario/chirografario
+        #         vivono nei dict delle singole rate dentro dettaglio["FASE_1_rate"]["rate"])
+        fase1_rate_dict = det.get("FASE_1_rate", {}).get("rate", {})
+        fase1_interessi = sum(
+            r.get("ipotecario", 0.0) + r.get("chirografario", 0.0)
+            for r in fase1_rate_dict.values()
+        )
+        n_rate = det.get("FASE_1_rate", {}).get("numero_rate_generate", 0)
+
+        # FASE 2: direttamente dai totali già calcolati (ipotecario + chirografario
+        #         complessivi, sottratti i contributi accumulati nella fase 1)
+        fase2_interessi = totale_gen - fase1_interessi
+
+        with st.expander("📊 Dettaglio Calcolo Interessi"):
+            st.markdown("### 🔢 Come vengono calcolati gli interessi di mora")
+            st.caption(
+                "Il calcolo è articolato in **due fasi distinte**, ciascuna "
+                "con formula esplicita. La somma delle due restituisce il "
+                "totale interessi di mora."
             )
-
-            fase2 = risultato["dettaglio"]["FASE_2_capitale_residuo"]
-            fase2_interessi = fase2["ipotecario"] + fase2["chirografario"]
-
-            n_rate = risultato["dettaglio"]["FASE_1_rate"]["numero_rate_generate"]
-            giorni_rate = giorni_tra(data_prima_rata, data_decadenza_effettiva)
-            giorni_capitale = giorni_tra(data_decadenza_effettiva, data_fine)
-            tasso_pct = tasso_mora * 100
-            base = 365
-
-            st.markdown("### \U0001f535 Componente A \u2014 Interessi sulle Rate Scadute")
-            st.markdown(
-                "**Formula:** Quota capitale rate scadute " + MULT + " Tasso di mora " + MULT + " Giorni di ritardo<br><br>"
-                + "- Numero rate insolute: <strong>" + str(n_rate) + "</strong> (da <strong>" + data_prima_rata.strftime("%d/%m/%Y") + "</strong> a <strong>" + data_decadenza_effettiva.strftime("%d/%m/%Y") + "</strong>)<br>"
-                + "- Giorni totali trascorsi: <strong>" + str(giorni_rate) + "</strong><br>"
-                + "- Quota capitale per rata: <strong>EUR " + ("%,.2f" % importo_rata) + "</strong><br>"
-                + "- Tasso di mora pattuito: <strong>" + ("%.2f" % tasso_pct) + "%</strong> (annuo, base " + str(base) + " gg)<br>"
-                + "- Formula applicata: " + ("%,.2f" % importo_rata) + " " + MULT + " " + ("%.2f" % tasso_pct) + "% " + MULT + " " + str(giorni_rate) + " / " + str(base) + "<br>"
-                + "- <strong>Interessi rate scadute = EUR " + ("%,.2f" % fase1_interessi) + "</strong>"
-            )
-
             st.divider()
 
-            st.markdown("### \U0001f7e0 Componente B \u2014 Interessi sul Capitale Residuo")
-            st.markdown(
-                "**Formula:** Capitale residuo " + MULT + " Tasso di mora " + MULT + " Giorni dalla decadenza<br><br>"
-                + "- Capitale residuo a base del calcolo: <strong>EUR " + ("%,.2f" % capitale_residuo) + "</strong><br>"
-                + "- Data inizio mora capitale: <strong>" + data_decadenza_effettiva.strftime("%d/%m/%Y") + "</strong><br>"
-                + "- Data fine calcolo: <strong>" + data_fine.strftime("%d/%m/%Y") + "</strong><br>"
-                + "- Giorni dalla decadenza: <strong>" + str(giorni_capitale) + "</strong><br>"
-                + "- Tasso di mora pattuito: <strong>" + ("%.2f" % tasso_pct) + "%</strong> (annuo, base " + str(base) + " gg)<br>"
-                + "- Formula applicata: " + ("%,.2f" % capitale_residuo) + " " + MULT + " " + ("%.2f" % tasso_pct) + "% " + MULT + " " + str(giorni_capitale) + " / " + str(base) + "<br>"
-                + "- <strong>Interessi capitale residuo = EUR " + ("%,.2f" % fase2_interessi) + "</strong>"
-            )
+            f1_col, f2_col = st.columns(2)
+
+            with f1_col:
+                st.markdown("#### 🅰️ Interessi sulle Rate Scadute")
+                st.markdown(
+                    "**Formula:**  "
+                    "`Quota capitale rata × Tasso di mora × Giorni di ritardo / 365`"
+                )
+                st.markdown(
+                    f"- **Fase 1:** Mora calcolata rata per rata, "
+                    f"dalla scadenza di ciascuna rata fino alla **decadenza** "
+                    f"({data_decadenza_effettiva.strftime('%d/%m/%Y')}).\n"
+                    f"- **N° rate scadute:** {n_rate}\n"
+                    f"- **Quota capitale rate scadute:** "
+                    f"€ {capitale_residuo:,.2f}\n"
+                    f"- **Tasso di mora:** {tasso_mora*100:.2f}% (pattuito)\n"
+                    f"- **Convenzione giorni:** /365\n"
+                    f"- **Interessi rate scadute → 🅰️ = € {fase1_interessi:,.2f}**"
+                )
+                with st.expander("📋 Dettaglio rata per rata"):
+                    for chiave_rata, dettaglio_rata in fase1_rate_dict.items():
+                        ipot_r = dettaglio_rata.get("ipotecario", 0.0)
+                        chiro_r = dettaglio_rata.get("chirografario", 0.0)
+                        st.markdown(
+                            f"- **{chiave_rata}:** "
+                            f"ipotecario € {ipot_r:,.2f} + "
+                            f"chirografario € {chiro_r:,.2f}"
+                        )
+
+            with f2_col:
+                st.markdown("#### 🅱️ Interessi sul Capitale Residuo")
+                st.markdown(
+                    "**Formula:**  "
+                    "`Capitale residuo × Tasso di mora × Giorni dalla decadenza / 365`"
+                )
+                gg_fase2 = (data_fine - data_decadenza_effettiva).days
+                st.markdown(
+                    f"- **Fase 2:** Mora calcolata sull'**intero capitale residuo** "
+                    f"dalla **decadenza** ({data_decadenza_effettiva.strftime('%d/%m/%Y')}) "
+                    f"fino a oggi ({data_fine.strftime('%d/%m/%Y')}).\n"
+                    f"- **Capitale residuo:** € {capitale_residuo:,.2f}\n"
+                    f"- **Tasso di mora:** {tasso_mora*100:.2f}% (pattuito)\n"
+                    f"- **Giorni (decadenza → oggi):** {gg_fase2}\n"
+                    f"- **Convenzione giorni:** /365\n"
+                    f"- **Interessi capitale residuo → 🅱️ = € {fase2_interessi:,.2f}**"
+                )
 
             st.divider()
-
-            somma_due_componenti = fase1_interessi + fase2_interessi
-            scarto = abs(somma_due_componenti - totale_gen)
-
-            r1, r2 = st.columns(2)
-            r1.markdown(
-                "<strong>Verifica A + B</strong><br><br>"
-                + "EUR " + ("%,.2f" % fase1_interessi) + " + EUR " + ("%,.2f" % fase2_interessi) + "<br><br>"
-                + "### = <strong>EUR " + ("%,.2f" % somma_due_componenti) + "</strong>"
+            st.markdown(
+                f"### ✅ Verifica quadratura\n\n"
+                f"🅰️ Interessi rate scadute   **€ {fase1_interessi:,.2f}**\n"
+                f"🅱️ Interessi capitale residuo **€ {fase2_interessi:,.2f}**\n"
+                f"─────────────────────────────────\n"
+                f"💰 TOTALE interessi di mora   **€ {totale_gen:,.2f}**"
             )
-            r2.markdown(
-                "<strong>TOTALE Interessi</strong><br><br>"
-                + "### = <strong>EUR " + ("%,.2f" % totale_gen) + "</strong><br><br>"
-                + "<em>Scarto: EUR " + ("%.4f" % scarto) + "</em>"
-            )
-
-            if scarto < 0.01:
-                st.success("Verifica superata: i due componenti riproducono esattamente il totale.")
+            scarto_f = abs(fase1_interessi + fase2_interessi - totale_gen)
+            if scarto_f > 0.01:
+                st.error(f"⚠️ Scarto di quadratura: € {scarto_f:,.2f}")
             else:
-                err_msg = "Scarto anomalo: EUR " + ("%.4f" % scarto) + ". Verificare la logica."
-                st.error(err_msg)
-
-
+                st.caption("✅ Quadratura verificata: 🅰️ + 🅱️ = 💰")
 
         # --- Salvo i totali per il Tab 3 (NPL) ---
         debito_totale = capitale_residuo + totale_gen + spese_legali
