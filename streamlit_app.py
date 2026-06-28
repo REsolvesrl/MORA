@@ -528,7 +528,7 @@ with tab1:
         }
 
         # ==========================================================
-        # 🔎 CHECK GBV (AUDITING A COMPONENTI)
+        # 🔎 CHECK GBV DICHIARATO DAL CREDITORE
         # ==========================================================
         if gbv_dichiarato > 0 and risultato_gbv is not None:
             st.divider()
