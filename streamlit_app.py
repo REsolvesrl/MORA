@@ -415,11 +415,11 @@ with tab1:
 
     # ---- GBV dichiarato + voci secondarie ----
     gbv_dichiarato = st.number_input(
-        "🏦 GBV Dichiarato dal Creditore (€)",
+        "🏦 GBV Dichiarato dalla Cedente (€)",
         min_value=0.0,
         value=0.0,
         step=1000.0,
-        help="Importo complessivo (Gross Book Value) richiesto dalla banca/cessionario. "
+        help="Importo complessivo (Gross Book Value) richiesto dalla banca/cedente. "
              "Lascia 0 per saltare il check di congruità."
     )
 
@@ -442,7 +442,7 @@ with tab1:
 
     with st.expander("➕ Aggiungi Spese Legali / Altro"):
         spese_legali = st.number_input(
-            "⚖️ Spese legali creditore / procedurali (€)",
+            "⚖️ Spese legali sostenute dal creditore / procedurali (€)",
             min_value=0.0, value=0.0, step=100.0,
             help="Spese di precetto, notifica, procedura esecutiva richieste in atto."
         )
@@ -779,7 +779,7 @@ with tab3:
     # ============================================================
     # SEZIONE: COSTI DI ACQUISIZIONE CREDITO (modificabili)
     # ============================================================
-    st.markdown("#### 💼 Costi di Acquisizione Credito (modificabili)")
+    st.markdown("#### 💼 Costi di Acquisizione Credito")
 
     a1, a2, a3, a4 = st.columns(4)
     fronting_val = a1.number_input(
@@ -795,13 +795,13 @@ with tab3:
         help="Formalizzazione dell'atto di cessione del credito."
     )
     servicer_val = a3.number_input(
-        "Gestore credito / Servicer (€)",
+        "Gestore credito (€)",
         min_value=0.0, value=float(COSTI_ACQUISIZIONE["servicer"]),
         step=100.0, format="%.2f",
         help="Compenso del servicer per la gestione del credito acquistato."
     )
     advisors_val = a4.number_input(
-        "Advisors (Legali/Tecnici) (€)",
+        "Advisors (€)",
         min_value=0.0, value=float(COSTI_ACQUISIZIONE["advisors"]),
         step=100.0, format="%.2f",
         help="Consulenza legale, due diligence e supporto tecnico."
@@ -838,9 +838,9 @@ with tab3:
     w1, w2, w3, w4 = st.columns(4)
     w1.metric("🏦 GBV Partenza", f"€ {gbv_base:,.2f}")
     w2.metric("− Totale Spese Fisse", f"€ {totale_spese_fisse:,.2f}",
-              help="Spese procedura + costi di acquisizione")
-    w3.metric("= Base Netta pre-margine", f"€ {base_netta:,.2f}")
-    w4.metric("− Margine (%)", f"{margine*100:.0f}%")
+              help="Spese procedura + costi di acquisizione (sopra)")
+    w3.metric("= Base Netta pre-sconto", f"€ {base_netta:,.2f}")
+    w4.metric("− Sconto trattativa (%)", f"{margine*100:.0f}%")
 
     st.divider()
 
