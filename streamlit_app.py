@@ -532,9 +532,9 @@ with tab1:
         # ==========================================================
         if gbv_dichiarato > 0 and risultato_gbv is not None:
             st.divider()
-            st.subheader("🔎 Check GBV (Auditing a componenti)")
+            st.subheader("🔎 Check GBV dichiarato dal creditore")
             st.caption(
-                "Confronto 'alla pari': il GBV dichiarato viene paragonato al "
+                "Il GBV dichiarato viene paragonato al "
                 "nostro calcolo congelato alla **stessa data di attualizzazione** "
                 f"(**{data_attualizzazione_gbv.strftime('%d/%m/%Y')}**), non a oggi."
             )
