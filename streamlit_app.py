@@ -412,7 +412,7 @@ with tab1:
             help="In assenza di DBT, la decadenza decorre dalla notifica del precetto."
         )
 
-    # ---- GBV dichiarato + voci secondarie ----
+      # ---- GBV dichiarato + voci secondarie ----
     gbv_dichiarato = st.number_input(
         "🏦 GBV Dichiarato dal Creditore (€)",
         min_value=0.0,
@@ -421,6 +421,20 @@ with tab1:
         help="Importo complessivo (Gross Book Value) richiesto dalla banca/cessionario. "
              "Lascia 0 per saltare il check di congruità."
     )
+
+    # 🆕 Data di attualizzazione del GBV (appare solo se GBV > 0)
+    if gbv_dichiarato > 0:
+        data_attualizzazione_gbv = st.date_input(
+            "📅 Data di attualizzazione del GBV",
+            value=date(2022, 11, 6),
+            format="DD/MM/YYYY",
+            help="⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato gli "
+                 "interessi nel GBV dichiarato (spesso anteriore al precetto!). "
+                 "Il check di congruità userà QUESTA data per un confronto "
+                 "'mele con mele', evitando falsi allarmi di anatocismo."
+        )
+    else:
+        data_attualizzazione_gbv = None
 
     # 🔗 Salvo il GBV per il Tab 3 (NPL)
     st.session_state["gbv_dichiarato"] = gbv_dichiarato
