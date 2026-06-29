@@ -851,11 +851,16 @@ with tab3:
     # --- Recupero dati dagli altri tab ---
     debito = st.session_state.get("debito_totale", 0.0)
     spese_procedura = st.session_state.get("spese_future", 0.0)
+    gbv_dichiarato = st.session_state.get("gbv_dichiarato", 0.0)
 
-    # --- GBV base: usiamo sempre il debito totale calcolato a OGGI ---
-    # Ignoriamo il GBV dichiarato dal creditore perché obsoleto ai fini dell'offerta NPL
-    gbv_base = debito
-    fonte_gbv = "Capitale Residuo mutuo + interessi calcolati a oggi (Tab 1)"
+    # --- GBV base: usiamo il GBV DICHIARATO dalla cedente (la pretesa) ---
+    # Se non è stato inserito (0), fallback sul debito calcolato a oggi (Tab 1).
+    if gbv_dichiarato > 0:
+        gbv_base = gbv_dichiarato
+        fonte_gbv = "GBV dichiarato dalla cedente (Tab 1)"
+    else:
+        gbv_base = debito
+        fonte_gbv = "Debito calcolato a oggi (Tab 1) — nessun GBV dichiarato inserito"
 
     if gbv_base <= 0:
         st.info(
@@ -869,7 +874,9 @@ with tab3:
     r1, r2, r3 = st.columns(3)
     r1.metric("🏦 GBV Partenza", f"€ {gbv_base:,.2f}", help=f"Fonte: {fonte_gbv}")
     r2.metric("💸 Spese Procedura (Tab 2)", f"€ {spese_procedura:,.2f}")
-    r3.metric("💰 Debito Totale ", f"€ {debito:,.2f}")
+    r3.metric("📐 Debito Reale Calcolato", f"€ {debito:,.2f}",
+              help="Ricostruzione millimetrica del Tab 1 (capitale + interessi mora + spese legali). "
+                   "Termine di confronto con la pretesa della cedente.")
 
     st.divider()
 
