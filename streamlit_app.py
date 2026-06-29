@@ -988,7 +988,7 @@ with tab3:
             f"Base netta disponibile: € {base_netta:,.2f}."
         )
 
-    # ============================================================
+ # ============================================================
     # METRICHE NPL PER INVESTITORI
     # ============================================================
     st.markdown("#### 📐 Metriche Finanziarie – Investitori NPL")
@@ -996,24 +996,55 @@ with tab3:
     # Capitale Investito Totale = Offerta Target + Totale Spese Fisse
     capitale_investito = offerta_target + totale_spese_fisse
 
-    # Utile Lordo = margine in Euro generato dall'operazione
+    # 1) Utile Lordo = margine in Euro generato sull'operazione (sul GBV)
     utile_lordo = base_netta - offerta_target  # = importo_margine
 
-    # ROE = Utile Lordo / Capitale Investito Totale
-    roe = utile_lordo / capitale_investito if capitale_investito > 0 else 0
+    # 2) Utile da Interessi Maturati (DELTA NOMINALE, già a oggi)
+    #    Debito Reale Calcolato (Tab 1) è già attualizzato a oggi
+    #    → nessuna riattualizzazione. 1A: mostrato anche se negativo.
+    utile_interessi_maturati = debito - gbv_base
 
-    # IRR annualizzato = (1 + ROE)^(12/mesi) - 1
+    # 3) Utile Totale
+    utile_totale = utile_lordo + utile_interessi_maturati
+
+    # ROE = Utile Totale / Capitale Investito Totale
+    roe = utile_totale / capitale_investito if capitale_investito > 0 else 0
+
+    # IRR annualizzato — il delta interessi è incassato A FINE PROCEDURA
+    # rendimento di periodo = Utile Totale / Capitale, poi annualizzato sui mesi
     irrennuale = ((1 + roe) ** (12 / durata_mesi) - 1) if durata_mesi > 0 else 0
+
+    # --- Waterfall esplicito della composizione dell'utile ---
+    st.markdown("##### 🧮 Composizione dell'Utile")
+    cu1, cu2, cu3 = st.columns(3)
+    cu1.metric("💶 Utile Lordo (su GBV)", f"€ {utile_lordo:,.2f}",
+               help="Base Netta − Offerta Target = margine generato sul GBV dichiarato.")
+    cu2.metric("➕ Utile da Interessi Maturati", f"€ {utile_interessi_maturati:,.2f}",
+               help="Debito Reale Calcolato (Tab 1, a oggi) − GBV di partenza. "
+                    "Valore nominale: il debito reale è già attualizzato a oggi, "
+                    "quindi non si riattualizza. Può essere negativo se il GBV "
+                    "dichiarato supera il debito ricostruito.")
+    cu3.metric("= Utile Totale", f"€ {utile_totale:,.2f}")
+
+    if utile_interessi_maturati < 0:
+        st.warning(
+            f"⚠️ **Delta interessi negativo (€ {utile_interessi_maturati:,.2f}).** "
+            f"Il GBV di partenza (€ {gbv_base:,.2f}) supera il Debito Reale "
+            f"Calcolato (€ {debito:,.2f}). Verificare la pretesa della cedente "
+            f"o la data di attualizzazione del Tab 1. Il valore è comunque "
+            f"computato per intero (riduce l'Utile Totale)."
+        )
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("🎯 Offerta Target", f"€ {offerta_target:,.2f}")
-    m2.metric("💶 Utile Lordo", f"€ {utile_lordo:,.2f}",
-              help="Margine in Euro = Base Netta − Offerta Target")
+    m2.metric("💶 Utile Totale", f"€ {utile_totale:,.2f}",
+              help="Utile Lordo + Utile da Interessi Maturati")
     m3.metric("📊 ROE", f"{roe*100:.2f}%",
-              help="Return on Equity = Utile Lordo / Capitale Investito Totale")
+              help="Return on Equity = Utile Totale / Capitale Investito Totale")
     m4.metric("📈 IRR Annualizzato", f"{irrennuale*100:.2f}%",
-              help=f"Tasso Interno di Rendimento annualizzato su {durata_mesi} mesi")
-
+              help=f"Rendimento annualizzato su {durata_mesi} mesi. "
+                   f"Il delta interessi è incassato a fine procedura.")
+    
     # ============================================================
     # GRAFICO DI SENSIBILITÀ – Offerta vs Utile Lordo & ROE
     # ============================================================
