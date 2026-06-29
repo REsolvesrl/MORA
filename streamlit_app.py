@@ -714,6 +714,188 @@ with tab1:
         else:
             st.caption("✅ Quadratura verificata: la somma delle 3 fasi coincide col totale.")
 
+
+        # ==========================================================
+        # 📋 DETTAGLIO CALCOLI ART. 2855 c.c. (TRASPARENZA)
+        # ==========================================================
+        det = risultato["dettaglio"]
+        v = risultato["voci_2855"]
+
+        # --- Ricostruzione parametri esatti di ciascuna fase ---
+        inizio_triennio, inizio_annata_pign, fine_annata_pign = calcola_triennio(
+            data_stipula, data_pignoramento
+        )
+
+        # ---------- FASE 1 (Pre-Triennio) ----------
+        fase1_rate_dict = det.get("FASE_1_rate", {}).get("rate", {})
+
+        # Data di inizio mora della prima rata (primo elemento)
+        prima_rata_dates = [
+            k for k in fase1_rate_dict.keys()
+        ]
+        # data_inizio_fase1 = min data_scadenza tra le rate
+        def _parse_rata_date(key):
+            # key format: "rata_N_(DD/MM/YYYY)"
+            date_str = key.split("(")[1].rstrip(")")
+            from datetime import datetime
+            return datetime.strptime(date_str, "%d/%m/%Y").date()
+
+        data_inizio_fase1 = min(_parse_rata_date(k) for k in prima_rata_dates) if prima_rata_dates else data_decadenza_effettiva
+
+        # Somma giorni pre-triennio su tutte le rate (giorni che cada rata trascorre nel pre-triennio)
+        def _gg_pre_triennio(dr):
+            return dr.get("pre_triennio_chiro", 0.0)  # interesse pre-triennio calcolato per quella rata
+
+        gg_totali_pre = 0
+        for dr in fase1_rate_dict.values():
+            pre = dr.get("pre_triennio_chiro", 0.0)
+            if pre > 0:
+                rata_cap = None
+                # ricostruiamo il capitale della rata dal dettaglio (non direttamente disponibile
+                # in dr, ma lo recuperiamo dal totale degli interessi pre-triennio chirografario
+                # diviso il tasso — come proxy ragionevole per la dimostrazione)
+                gg_totali_pre += 1  # conteggio rate con quota pre-triennio
+        # Non abbiamo i giorni esatti per ogni rata senza il dato capitale,
+        # quindi mostriamo l'aggregato: tot interessi / (capitale*tasso/365) → giorni equivalenti
+        pre_chiro_tot = v["pre_chiro"]
+        gg_equivalenti_pre = (pre_chiro_tot / (capitale_residuo * tasso_mora / 365)) if (capitale_residuo * tasso_mora) > 0 else 0
+
+        # ---------- FASE 2 (Triennio) ----------
+        gg_triennio = (fine_annata_pign - inizio_triennio).days  # durata esatta triennio
+        gg_triennio_attivo = 0
+        # calcolo giorni effettivi nel triennio per la fase1 (rate) e fase2 (capitale)
+        gg_f1_triennio = 0
+        gg_f2_triennio = (fine_annata_pign - max(data_decadenza_effettiva, inizio_triennio)).days
+        if gg_f2_triennio < 0:
+            gg_f2_triennio = 0
+
+        for dr in fase1_rate_dict.values():
+            if dr.get("triennio_ipo_mora", 0.0) > 0:
+                gg_f1_triennio += 1  # rate che hanno quota nel triennio
+
+        # ---------- FASE 3 (Post-Triennio) ----------
+        gg_post = (data_fine - fine_annata_pign).days
+        if gg_post < 0:
+            gg_post = 0
+        tasso_legale_attuale = TASSI_LEGALI.get(data_fine.year, TASSO_LEGALE_DEFAULT)
+        post_ipo = v["post_ipo"]
+        post_chiro = v["post_chiro"]
+
+        with st.expander("🔍 Dettaglio calcoli Art. 2855 c.c."):
+            st.markdown("## 📐 Matematica della Tripartizione ex Art. 2855 c.c.")
+
+            # --- Quadratura ---
+            somma_voci = v["pre_chiro"] + v["triennio_ipo"] + v["post_ipo"] + v["post_chiro"]
+            quadratura_ok = abs(somma_voci - totale_gen) <= 0.01
+
+            st.markdown(f"""
+            **Dati di contesto**
+            - Mutuo stipulato il: **{data_stipula.strftime('%d/%m/%Y')}**
+            - Pignoramento il: **{data_pignoramento.strftime('%d/%m/%Y')}**
+            - Data fine calcolo: **{data_fine.strftime('%d/%m/%Y')}**
+            - Capitale residuo: **€ {capitale_residuo:,.2f}**
+            - Tasso di mora pattuito: **{(tasso_mora*100):.2f}%**
+            - Divisore giorni: **365** (anno civile)
+            - Tasso legale anno {data_fine.year}: **{(tasso_legale_attuale*100):.2f}%**
+
+            ---
+            """)
+
+            st.markdown("### 🔵 FASE 1 — PRE-TRIENNIO (Chirografario)")
+
+            st.markdown(f"""
+            **Periodo:** data prima rata scaduta → **{inizio_triennio.strftime('%d/%m/%Y')}** (inizio triennio)
+
+            **Capitale di riferimento:** singola rata insolta (importo: **€ {importo_rata:,.2f}**)
+
+            **Tasso applicato:** {(tasso_mora*100):.2f}% (tasso di mora pattuito)
+
+            **Formula:**  
+            `Capitale × Tasso × Giorni / 365`
+
+            Poiché gli interessi anteriori al triennio **degradano a chirografario**, la loro quota
+            viene separata e mostrata come **chirografario pre-triennio**.
+
+            **Risultato FASE 1:**  
+            🅰️ Quota chirografaria calcolata su tutte le rate insolute: **€ {v['pre_chiro']:,.2f}**
+            """)
+
+            st.markdown("---")
+            st.markdown("### 🟢 FASE 2 — TRIENNIO (Ipotecario)")
+
+            st.markdown(f"""
+            **Inizio triennio:** **{inizio_triennio.strftime('%d/%m/%Y')}**  
+            *(annata pignoramento – 2 anni: decorrendo dal giorno/mese di stipula)*
+
+            **Fine triennio / Annata pignoramento:** **{fine_annata_pign.strftime('%d/%m/%Y')}**  
+            *(annata in corso al pignoramento)*
+
+            **Giorni del triennio:** `{gg_triennio}` giorni (durata esatta 3 annate)
+
+            **Capitale di riferimento:**
+            - Per le **rate scadute**: singola rata insolta (**€ {importo_rata:,.2f}**)
+            - Per il **capitale residuo**: **€ {capitale_residuo:,.2f}**
+
+            **Tasso applicato:** {(tasso_mora*100):.2f}% (tasso di mora pattuito — pieno)
+
+            **Formula:**  
+            `Capitale × {(tasso_mora*100):.2f}% × {gg_triennio} / 365`
+
+            **Risultato FASE 2:**  
+            🅱️ Quota ipotecaria (mora piena sul triennio): **€ {v['triennio_ipo']:,.2f}**
+            """)
+
+            st.markdown("---")
+            st.markdown("### 🟠 FASE 3 — POST-TRIENNIO (Ipotecario al legale + Chirografario eccedenza)")
+
+            st.markdown(f"""
+            **Periodo:** **{fine_annata_pign.strftime('%d/%m/%Y')}** (fine annata pignoramento) → **{data_fine.strftime('%d/%m/%Y')}**
+
+            **Giorni fase 3:** `{gg_post}` giorni
+
+            Dopo l'annata del pignoramento la garanzia ipotecaria **degrada**: la legge (art. 2855 c.c.)
+            riconosce la sola quota al **tasso legale** come ipotecaria; l'eccedenza (differenza tra
+            mora pattuita e tasso legale) diventa chirografaria.
+
+            **Quota A — Ipotecaria (tasso legale pro-rata):**
+
+            `Capitale × {(tasso_legale_attuale*100):.2f}% × {gg_post} / 365`
+
+            | Voce | Importo |
+            |------|--------:|
+            | Quota ipotecaria (legale) | **€ {post_ipo:,.2f}** |
+
+            **Quota B — Chirografaria (eccedenza mora – legale):**
+
+            `Capitale × [{(tasso_mora*100):.2f}% − {(tasso_legale_attuale*100):.2f}%] × {gg_post} / 365`
+
+            = `Capitale × {(tasso_mora - tasso_legale_attuale)*100:.2f}% × {gg_post} / 365`
+
+            | Voce | Importo |
+            |------|--------:|
+            | Quota chirografaria (eccedenza) | **€ {post_chiro:,.2f}** |
+            """)
+
+            st.markdown("---")
+            st.markdown("### ✅ Quadratura")
+
+            st.markdown(f"""
+            | Fase | Voci | Importo |
+            |:-----|:-----|--------:|
+            | 🔵 Pre-triennio | Chirografario | € {v['pre_chiro']:,.2f} |
+            | 🟢 Triennio | Ipotecario (mora) | € {v['triennio_ipo']:,.2f} |
+            | 🟠 Post-triennio | Ipotecario (legale) | € {v['post_ipo']:,.2f} |
+            | 🟠 Post-triennio | Chirografario (eccedenza) | € {v['post_chiro']:,.2f} |
+            | **TOTALE INTERESSI** | | **€ {somma_voci:,.2f}** |
+
+            | Controllo | |
+            |:----------|-|
+            | Totale interessi da calcolo | € {totale_gen:,.2f} |
+            | Somma 4 voci art. 2855 | € {somma_voci:,.2f} |
+            | Scarto | € {abs(somma_voci - totale_gen):,.2f} |
+            | {"✅ Quadratura OK" if quadratura_ok else "⚠️ Verificare"} | |
+            """)
+
         n_rate = risultato["dettaglio"]["FASE_1_rate"]["numero_rate_generate"]
         st.info(f"🔢 Rate insolute auto-generate (prima rata → decadenza): **{n_rate}**")
 
