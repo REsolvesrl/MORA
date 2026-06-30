@@ -3,8 +3,6 @@ from datetime import date
 import plotly.graph_objects as go
 
 from calcoli import (
-    TASSI_LEGALI,
-    TASSO_LEGALE_DEFAULT,
     FREQUENZA_MESI,
     SPESE_IMMOBILIARE,
     SPESE_MOBILIARE,
@@ -62,7 +60,7 @@ with st.sidebar:
                                  format="DD/MM/YYYY")
     data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
                                       format="DD/MM/YYYY")
-    data_fine = st.date_input("Data fine calcolo (Attualizzazione desiderata)", value=date.today(),
+    data_fine = st.date_input("Data di aggiudicazione (attualizzazione desiderata)", value=date.today(),
                               format="DD/MM/YYYY")
 
     st.divider()
@@ -194,7 +192,6 @@ with tab1:
             "capitale_residuo": capitale_residuo,
             "tasso_mora": tasso_mora,
             "data_decadenza_effettiva": data_decadenza_effettiva,
-            "data_stipula": data_stipula,
             "data_pignoramento": data_pignoramento,
         }
 
@@ -306,7 +303,7 @@ with tab1:
                 st.markdown(
                     f"- **Fase 2:** Mora calcolata sull'**intero capitale residuo** "
                     f"dalla **decadenza** ({data_decadenza_effettiva.strftime('%d/%m/%Y')}) "
-                    f"fino a oggi ({data_fine.strftime('%d/%m/%Y')}).\n"
+                    f"fino alla **data di aggiudicazione** ({data_fine.strftime('%d/%m/%Y')}).\n"
                     f"- **Capitale residuo:** € {capitale_residuo:,.2f}\n"
                     f"- **Tasso di mora:** {tasso_mora*100:.2f}% (pattuito)\n"
                     f"- **Giorni (decadenza → oggi):** {gg_fase2}\n"
@@ -398,16 +395,18 @@ with tab1:
         with fase1:
             st.info(
                 "**🔵 FASE 1 – PRE-TRIENNIO**\n\n"
-                "Interessi anteriori al triennio: **degradano interamente a "
-                "chirografario**, pur restando al tasso di mora.\n\n"
+                "Interessi maturati **prima dei 3 anni antecedenti il "
+                "pignoramento**: degradano interamente a **chirografario**, "
+                "pur restando al tasso di mora.\n\n"
                 f"📄 Chirografario (mora):\n\n"
                 f"### € {v['pre_chiro']:,.2f}"
             )
 
         with fase2:
             st.success(
-                "**🟢 FASE 2 – TRIENNIO**\n"
-                "Annata in corso + 2 precedenti: **garanzia ipotecaria piena** "
+                "**🟢 FASE 2 – TRIENNIO**\n\n"
+                "Interessi maturati nei **3 anni esatti che precedono "
+                "il pignoramento**: **garanzia ipotecaria piena** "
                 "al tasso di mora pattuito.\n\n"
                 f"🏛️ Ipotecario (mora):\n\n"
                 f"### € {v['triennio_ipo']:,.2f}"
@@ -416,9 +415,10 @@ with tab1:
         with fase3:
             st.warning(
                 "**🟠 FASE 3 – POST-TRIENNIO**\n\n"
-                "Dopo l'annata del pignoramento la garanzia **degrada**: "
-                "resta ipotecaria solo la quota al **tasso legale**, "
-                "l'eccedenza diventa chirografaria.\n\n"
+                "Interessi maturati **dopo il pignoramento**: la garanzia "
+                "ipotecaria **degrada**, resta ipotecaria solo la quota al "
+                "**tasso legale** (cambia ogni 1° gennaio), l'eccedenza "
+                "diventa chirografaria.\n\n"
                 f"🏛️ Ipotecario (legale): **€ {v['post_ipo']:,.2f}**\n\n"
                 f"📄 Chirografario (eccedenza): **€ {v['post_chiro']:,.2f}**"
             )
@@ -437,24 +437,34 @@ with tab1:
         det = risultato["dettaglio"]
         v = risultato["voci_2855"]
 
-        # --- Ricostruzione parametri esatti di ciascuna fase ---
-        inizio_triennio, _, fine_annata_pign = calcola_triennio(
-            data_stipula, data_pignoramento
+        # --- Confini esatti del triennio (3 anni a ritroso dal pignoramento) ---
+        inizio_triennio, fine_triennio = calcola_triennio(data_pignoramento)
+        gg_triennio = (fine_triennio - inizio_triennio).days  # 1095 o 1096
+
+        # --- Fase 3 (post-triennio): dal pignoramento a data_fine ---
+        gg_post = max((data_fine - fine_triennio).days, 0)
+
+        # Spaccato anno per anno del tasso legale (calcolato sul capitale
+        # residuo, contributo dominante della Fase 3).
+        segmenti_legale = (
+            det.get("FASE_2_capitale_residuo", {})
+               .get("post_segmenti_legale", [])
         )
-
-        # ---------- FASE 2 (Triennio) ----------
-        gg_triennio = (fine_annata_pign - inizio_triennio).days  # durata esatta triennio
-
-        # ---------- FASE 3 (Post-Triennio) ----------
-        gg_post = (data_fine - fine_annata_pign).days
-        if gg_post < 0:
-            gg_post = 0
-        tasso_legale_attuale = TASSI_LEGALI.get(data_fine.year, TASSO_LEGALE_DEFAULT)
-        post_ipo = v["post_ipo"]
-        post_chiro = v["post_chiro"]
 
         with st.expander("🔍 Dettaglio calcoli Art. 2855 c.c."):
             st.markdown("## 📐 Matematica della Tripartizione ex Art. 2855 c.c.")
+
+            # --- Box didattico: perché il triennio inizia esattamente DATA-3 ANNI ---
+            st.info(
+                f"**Perché il triennio ipotecario (Fase 2) inizia esattamente "
+                f"il {inizio_triennio.strftime('%d/%m/%Y')} se la prima rata "
+                f"insoluta è scaduta prima?**\n\n"
+                f"Perché, secondo la prassi prevalente nei calcoli esecutivi "
+                f"in base all'**Art. 2855 c.c.**, il triennio garantito copre "
+                f"**esattamente i 3 anni antecedenti alla data del pignoramento**.\n\n"
+                f"Tutto il periodo precedente a questa data **non gode del "
+                f"privilegio ipotecario** e finisce nella **Fase 1 (Chirografo)**."
+            )
 
             # --- Quadratura ---
             somma_voci = v["pre_chiro"] + v["triennio_ipo"] + v["post_ipo"] + v["post_chiro"]
@@ -462,13 +472,12 @@ with tab1:
 
             st.markdown(f"""
             **Dati di contesto**
-            - Mutuo stipulato il: **{data_stipula.strftime('%d/%m/%Y')}**
+            - Mutuo stipulato il: **{data_stipula.strftime('%d/%m/%Y')}** *(dato informativo)*
             - Pignoramento il: **{data_pignoramento.strftime('%d/%m/%Y')}**
-            - Data fine calcolo: **{data_fine.strftime('%d/%m/%Y')}**
+            - Data di aggiudicazione (fine calcolo): **{data_fine.strftime('%d/%m/%Y')}**
             - Capitale residuo: **€ {capitale_residuo:,.2f}**
             - Tasso di mora pattuito: **{(tasso_mora*100):.2f}%**
             - Divisore giorni: **365** (anno civile)
-            - Tasso legale anno {data_fine.year}: **{(tasso_legale_attuale*100):.2f}%**
 
             ---
             """)
@@ -476,19 +485,19 @@ with tab1:
             st.markdown("### 🔵 FASE 1 — PRE-TRIENNIO (Chirografario)")
 
             st.markdown(f"""
-            **Periodo:** data prima rata scaduta → **{inizio_triennio.strftime('%d/%m/%Y')}** (inizio triennio)
+            **Periodo:** data prima rata scaduta → **{inizio_triennio.strftime('%d/%m/%Y')}** *(inizio triennio = pignoramento − 3 anni)*
 
             **Capitale di riferimento:** singola rata insoluta (importo: **€ {importo_rata:,.2f}**)
 
             **Tasso applicato:** {(tasso_mora*100):.2f}% (tasso di mora pattuito)
 
-            **Formula:**  
+            **Formula:**
             `Capitale × Tasso × Giorni / 365`
 
             Poiché gli interessi anteriori al triennio **degradano a chirografario**, la loro quota
             viene separata e mostrata come **chirografario pre-triennio**.
 
-            **Risultato FASE 1:**  
+            **Risultato FASE 1:**
             🅰️ Quota chirografaria calcolata su tutte le rate insolute: **€ {v['pre_chiro']:,.2f}**
             """)
 
@@ -496,13 +505,14 @@ with tab1:
             st.markdown("### 🟢 FASE 2 — TRIENNIO (Ipotecario)")
 
             st.markdown(f"""
-            **Inizio triennio:** **{inizio_triennio.strftime('%d/%m/%Y')}**  
-            *(annata pignoramento – 2 anni: decorrendo dal giorno/mese di stipula)*
+            **Inizio triennio:** **{inizio_triennio.strftime('%d/%m/%Y')}**
+            *(data pignoramento − 3 anni esatti)*
 
-            **Fine triennio / Annata pignoramento:** **{fine_annata_pign.strftime('%d/%m/%Y')}**  
-            *(annata in corso al pignoramento)*
+            **Fine triennio:** **{fine_triennio.strftime('%d/%m/%Y')}**
+            *(coincide con la data del pignoramento)*
 
-            **Giorni del triennio:** `{gg_triennio}` giorni (durata esatta 3 annate)
+            **Giorni del triennio:** `{gg_triennio}` giorni
+            *({"1096 = include un 29 febbraio" if gg_triennio == 1096 else "1095 = nessun 29 febbraio nel periodo"})*
 
             **Capitale di riferimento:**
             - Per le **rate scadute**: singola rata insoluta (**€ {importo_rata:,.2f}**)
@@ -510,10 +520,10 @@ with tab1:
 
             **Tasso applicato:** {(tasso_mora*100):.2f}% (tasso di mora pattuito — pieno)
 
-            **Formula:**  
+            **Formula:**
             `Capitale × {(tasso_mora*100):.2f}% × {gg_triennio} / 365`
 
-            **Risultato FASE 2:**  
+            **Risultato FASE 2:**
             🅱️ Quota ipotecaria (mora piena sul triennio): **€ {v['triennio_ipo']:,.2f}**
             """)
 
@@ -521,31 +531,70 @@ with tab1:
             st.markdown("### 🟠 FASE 3 — POST-TRIENNIO (Ipotecario al legale + Chirografario eccedenza)")
 
             st.markdown(f"""
-            **Periodo:** **{fine_annata_pign.strftime('%d/%m/%Y')}** (fine annata pignoramento) → **{data_fine.strftime('%d/%m/%Y')}**
+            **Periodo:** **{fine_triennio.strftime('%d/%m/%Y')}** *(pignoramento)* → **{data_fine.strftime('%d/%m/%Y')}** *(aggiudicazione)*
 
             **Giorni fase 3:** `{gg_post}` giorni
 
-            Dopo l'annata del pignoramento la garanzia ipotecaria **degrada**: la legge (art. 2855 c.c.)
-            riconosce la sola quota al **tasso legale** come ipotecaria; l'eccedenza (differenza tra
-            mora pattuita e tasso legale) diventa chirografaria.
+            Dopo il pignoramento la garanzia ipotecaria **degrada**: la legge (art. 2855 c.c.)
+            riconosce la sola quota al **tasso legale** come ipotecaria; l'eccedenza
+            (mora pattuita − legale) diventa chirografaria.
 
-            **Quota A — Ipotecaria (tasso legale pro-rata):**
+            **⚠️ Attenzione:** il tasso legale **cambia ogni 1° gennaio**.
+            Il calcolo è quindi **pro-rata temporis** spezzando il periodo ad ogni
+            cambio d'anno solare.
+            """)
 
-            `Capitale × {(tasso_legale_attuale*100):.2f}% × {gg_post} / 365`
+            # --- Spaccato Fase 3 anno per anno ---
+            if segmenti_legale:
+                st.markdown(
+                    f"**Quota A — Ipotecaria (tasso legale, calcolata sul "
+                    f"capitale residuo € {capitale_residuo:,.2f}):**"
+                )
+
+                righe = ["| Periodo | Giorni | Tasso legale | Interesse |",
+                         "|:--------|------:|------:|--------:|"]
+                for seg in segmenti_legale:
+                    periodo = (
+                        f"Dal {seg['inizio'].strftime('%d/%m/%Y')} "
+                        f"al {seg['fine'].strftime('%d/%m/%Y')}"
+                    )
+                    righe.append(
+                        f"| {periodo} | {seg['giorni']} | "
+                        f"{seg['tasso']*100:.2f}% | "
+                        f"€ {seg['interesse']:,.2f} |"
+                    )
+                tot_segmenti = sum(s["interesse"] for s in segmenti_legale)
+                righe.append(
+                    f"| **TOTALE Quota A (capitale residuo)** | "
+                    f"**{gg_post}** | | **€ {tot_segmenti:,.2f}** |"
+                )
+                st.markdown("\n".join(righe))
+
+                st.caption(
+                    "ℹ️ Lo spaccato sopra è calcolato sul **capitale residuo** "
+                    "(contributo dominante della Fase 3). Nel totale "
+                    f"ipotecario legale (€ {v['post_ipo']:,.2f}) sono inclusi "
+                    "anche eventuali contributi residui delle singole rate "
+                    "che si estendono oltre il pignoramento (se la decadenza "
+                    "è posteriore al pignoramento)."
+                )
+            else:
+                st.caption(
+                    "Nessun periodo post-triennio per il capitale residuo "
+                    "(la data di aggiudicazione coincide o precede il pignoramento)."
+                )
+
+            st.markdown(f"""
+
+            **Quota B — Chirografaria (eccedenza mora − legale):**
+
+            Sullo stesso periodo della Quota A, applicando la differenza
+            (tasso mora − tasso legale) giorno per giorno.
 
             | Voce | Importo |
             |------|--------:|
-            | Quota ipotecaria (legale) | **€ {post_ipo:,.2f}** |
-
-            **Quota B — Chirografaria (eccedenza mora – legale):**
-
-            `Capitale × [{(tasso_mora*100):.2f}% − {(tasso_legale_attuale*100):.2f}%] × {gg_post} / 365`
-
-            = `Capitale × {(tasso_mora - tasso_legale_attuale)*100:.2f}% × {gg_post} / 365`
-
-            | Voce | Importo |
-            |------|--------:|
-            | Quota chirografaria (eccedenza) | **€ {post_chiro:,.2f}** |
+            | 🏛️ TOTALE Quota A — Ipotecaria (legale) | **€ {v['post_ipo']:,.2f}** |
+            | 📄 TOTALE Quota B — Chirografaria (eccedenza) | **€ {v['post_chiro']:,.2f}** |
             """)
 
             st.markdown("---")

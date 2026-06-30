@@ -82,22 +82,65 @@ class TestInteresseLegaleProRata:
         # 1000 € dal 1/2/2024 al 1/3/2024 (29 giorni, anno 2024 bisestile)
         # tasso 2024 = 0.0250
         atteso = 1000 * 0.0250 * 29 / 365
-        assert interesse_legale_pro_rata(
+        totale, segmenti = interesse_legale_pro_rata(
             1000, date(2024, 2, 1), date(2024, 3, 1)
-        ) == pytest.approx(atteso)
+        )
+        assert totale == pytest.approx(atteso)
+        assert len(segmenti) == 1
+        assert segmenti[0]["inizio"] == date(2024, 2, 1)
+        assert segmenti[0]["fine"] == date(2024, 3, 1)
+        assert segmenti[0]["giorni"] == 29
+        assert segmenti[0]["tasso"] == 0.0250
+        assert segmenti[0]["interesse"] == pytest.approx(atteso)
 
     def test_a_cavallo_di_capodanno(self):
         # 1000 € dal 1/7/2024 al 1/7/2025
         # 2024 (tasso 0.0250) per 184 gg + 2025 (tasso 0.0200) per 181 gg
         atteso = 1000 * 0.0250 * 184 / 365 + 1000 * 0.0200 * 181 / 365
-        assert interesse_legale_pro_rata(
+        totale, segmenti = interesse_legale_pro_rata(
             1000, date(2024, 7, 1), date(2025, 7, 1)
-        ) == pytest.approx(atteso)
+        )
+        assert totale == pytest.approx(atteso)
+        assert len(segmenti) == 2
+        # Primo segmento: 2024
+        assert segmenti[0]["inizio"] == date(2024, 7, 1)
+        assert segmenti[0]["fine"] == date(2025, 1, 1)
+        assert segmenti[0]["giorni"] == 184
+        assert segmenti[0]["tasso"] == 0.0250
+        # Secondo segmento: 2025
+        assert segmenti[1]["inizio"] == date(2025, 1, 1)
+        assert segmenti[1]["fine"] == date(2025, 7, 1)
+        assert segmenti[1]["giorni"] == 181
+        assert segmenti[1]["tasso"] == 0.0200
+
+    def test_tre_anni_solari(self):
+        # 1000 € dal 15/06/2024 al 30/06/2026 (data_fine ESCLUSA)
+        # 2024 (0.0250): 15/06 → 01/01/2025 = 200 gg
+        # 2025 (0.0200): 01/01 → 01/01/2026 = 365 gg
+        # 2026 (0.0160): 01/01 → 30/06/2026 = 180 gg (esclude il 30/06)
+        totale, segmenti = interesse_legale_pro_rata(
+            1000, date(2024, 6, 15), date(2026, 6, 30)
+        )
+        assert len(segmenti) == 3
+        assert segmenti[0]["giorni"] == 200
+        assert segmenti[0]["tasso"] == 0.0250
+        assert segmenti[1]["giorni"] == 365
+        assert segmenti[1]["tasso"] == 0.0200
+        assert segmenti[2]["giorni"] == 180
+        assert segmenti[2]["tasso"] == 0.0160
+        atteso = (
+            1000 * 0.0250 * 200 / 365
+            + 1000 * 0.0200 * 365 / 365
+            + 1000 * 0.0160 * 180 / 365
+        )
+        assert totale == pytest.approx(atteso)
 
     def test_data_fine_uguale_inizio(self):
-        assert interesse_legale_pro_rata(
+        totale, segmenti = interesse_legale_pro_rata(
             1000, date(2024, 1, 1), date(2024, 1, 1)
-        ) == 0.0
+        )
+        assert totale == 0.0
+        assert segmenti == []
 
 
 # ==========================================================
@@ -136,35 +179,45 @@ class TestGeneraRateScadute:
 
 
 # ==========================================================
-# Calcolo triennio ipotecario
+# Calcolo del triennio garantito (3 anni a ritroso dal pignoramento)
 # ==========================================================
 
 class TestCalcolaTriennio:
-    def test_caso_standard(self):
-        # Stipula 15/06/2018, pignoramento 10/09/2023
-        # Annata corrente: 15/06/2023 → 15/06/2024
-        # Triennio: 15/06/2021 → 15/06/2024
-        inizio_t, inizio_a, fine_a = calcola_triennio(date(2018, 6, 15), date(2023, 9, 10))
-        assert inizio_a == date(2023, 6, 15)
-        assert fine_a == date(2024, 6, 15)
-        assert inizio_t == date(2021, 6, 15)
+    def test_esempio_da_specifica(self):
+        # Esempio dato dall'utente: pignoramento 16/12/2021
+        # → triennio 16/12/2018 → 16/12/2021
+        inizio_t, fine_t = calcola_triennio(date(2021, 12, 16))
+        assert inizio_t == date(2018, 12, 16)
+        assert fine_t == date(2021, 12, 16)
 
-    def test_rollback_quando_anniversario_dopo_pignoramento(self):
-        # Stipula 31/12/2018, pignoramento 15/01/2023
-        # 31/12/2023 > 15/01/2023 → rollback a 31/12/2022
-        inizio_t, inizio_a, fine_a = calcola_triennio(date(2018, 12, 31), date(2023, 1, 15))
-        assert inizio_a == date(2022, 12, 31)
-        assert fine_a == date(2023, 12, 31)
-        assert inizio_t == date(2020, 12, 31)
+    def test_caso_default_app(self):
+        # Pignoramento 10/09/2023 → triennio 10/09/2020 → 10/09/2023
+        inizio_t, fine_t = calcola_triennio(date(2023, 9, 10))
+        assert inizio_t == date(2020, 9, 10)
+        assert fine_t == date(2023, 9, 10)
 
-    def test_durata_annata_esattamente_un_anno(self):
-        inizio_t, inizio_a, fine_a = calcola_triennio(date(2020, 3, 1), date(2024, 6, 1))
-        assert (fine_a - inizio_a).days in (365, 366)
+    def test_durata_in_giorni_senza_bisestile(self):
+        # Triennio 01/03/2017 → 01/03/2020 attraversa solo il 29/02/2020,
+        # ma in modo che il computo (years=3) includa 1 anno bisestile
+        # → 365 + 365 + 366 = 1096 giorni
+        inizio_t, fine_t = calcola_triennio(date(2020, 3, 1))
+        assert (fine_t - inizio_t).days == 1096
 
-    def test_durata_triennio_circa_tre_anni(self):
-        inizio_t, _, fine_a = calcola_triennio(date(2020, 3, 1), date(2024, 6, 1))
-        # 3 anni = ~1095 o 1096 giorni
-        assert 1095 <= (fine_a - inizio_t).days <= 1097
+    def test_durata_in_giorni_con_bisestile(self):
+        # Triennio 01/01/2021 → 01/01/2024 attraversa 29/02/2024? No,
+        # il 29/02/2024 è dentro il 2024 ma il triennio finisce all'1/1/2024
+        # → 365 (2021) + 365 (2022) + 365 (2023) = 1095 giorni
+        inizio_t, fine_t = calcola_triennio(date(2024, 1, 1))
+        assert (fine_t - inizio_t).days == 1095
+
+    def test_durata_sempre_1095_o_1096(self):
+        # Su qualunque data il triennio dura 1095 o 1096 giorni
+        for d in [date(2020, 5, 1), date(2025, 2, 28), date(2024, 7, 15),
+                  date(2023, 12, 31), date(2022, 3, 1)]:
+            inizio_t, fine_t = calcola_triennio(d)
+            assert (fine_t - inizio_t).days in (1095, 1096), (
+                f"Durata fuori range per {d}: {(fine_t - inizio_t).days}"
+            )
 
 
 # ==========================================================
@@ -172,38 +225,40 @@ class TestCalcolaTriennio:
 # ==========================================================
 
 class TestRipartisciCredito:
-    # Setup comune: triennio 15/06/2021 → 15/06/2024
-    DATA_STIPULA = date(2018, 6, 15)
+    # Setup comune: pignoramento 10/09/2023 → triennio 10/09/2020 → 10/09/2023
     DATA_PIGN = date(2023, 9, 10)
 
     def test_solo_post_triennio(self):
-        # data_inizio_mora dopo fine annata pignoramento → solo post-triennio
+        # data_inizio_mora dopo il pignoramento → solo Fase 3
         r = ripartisci_credito(
             capitale=10000,
             tasso_mora=0.10,
             data_inizio_mora=date(2024, 7, 1),
-            data_stipula=self.DATA_STIPULA,
             data_pignoramento=self.DATA_PIGN,
-            data_fine=date(2025, 1, 1),
+            data_fine=date(2025, 3, 1),
         )
-        # Nessun pre, nessun triennio, solo post
         assert "pre_triennio_chiro" not in r["dettaglio"]
         assert "triennio_ipo_mora" not in r["dettaglio"]
         assert "post_ipo_legale" in r["dettaglio"]
         assert "post_chiro_diff" in r["dettaglio"]
-        # Ipotecario = quota a tasso legale; chirografario = eccedenza (mora − legale)
+        assert "post_segmenti_legale" in r["dettaglio"]
+        # Lo spaccato deve coprire 2024 (parziale) e 2025 (parziale)
+        segmenti = r["dettaglio"]["post_segmenti_legale"]
+        assert len(segmenti) == 2
+        assert segmenti[0]["tasso"] == 0.0250  # 2024
+        assert segmenti[1]["tasso"] == 0.0200  # 2025
         assert r["ipotecario"] > 0
         assert r["chirografario"] > 0
 
     def test_solo_triennio(self):
-        # data_inizio_mora e data_fine entrambe dentro l'annata pignoramento
+        # data_inizio_mora dentro il triennio, data_fine dentro il triennio
+        # → tutto Fase 2 (ipotecario @ mora)
         r = ripartisci_credito(
             capitale=10000,
             tasso_mora=0.10,
-            data_inizio_mora=date(2023, 10, 1),
-            data_stipula=self.DATA_STIPULA,
+            data_inizio_mora=date(2022, 1, 1),
             data_pignoramento=self.DATA_PIGN,
-            data_fine=date(2024, 1, 1),
+            data_fine=date(2023, 6, 1),
         )
         assert "pre_triennio_chiro" not in r["dettaglio"]
         assert "triennio_ipo_mora" in r["dettaglio"]
@@ -211,6 +266,57 @@ class TestRipartisciCredito:
         # Tutto ipotecario @ tasso mora
         assert r["chirografario"] == pytest.approx(0.0)
         assert r["ipotecario"] > 0
+
+    def test_solo_pre_triennio(self):
+        # data_inizio_mora e data_fine entrambe PRIMA del triennio
+        # (triennio inizia 10/09/2020) → tutto Fase 1 (chirografario @ mora)
+        r = ripartisci_credito(
+            capitale=10000,
+            tasso_mora=0.10,
+            data_inizio_mora=date(2018, 1, 1),
+            data_pignoramento=self.DATA_PIGN,
+            data_fine=date(2019, 1, 1),
+        )
+        assert "pre_triennio_chiro" in r["dettaglio"]
+        assert "triennio_ipo_mora" not in r["dettaglio"]
+        assert "post_ipo_legale" not in r["dettaglio"]
+        assert r["ipotecario"] == pytest.approx(0.0)
+        assert r["chirografario"] > 0
+
+    def test_attraversa_tutte_le_fasi(self):
+        # data_inizio_mora ben prima del triennio, data_fine ben dopo il pignoramento
+        # → presenti tutte e tre le fasi
+        r = ripartisci_credito(
+            capitale=10000,
+            tasso_mora=0.10,
+            data_inizio_mora=date(2018, 1, 1),
+            data_pignoramento=self.DATA_PIGN,
+            data_fine=date(2026, 6, 30),
+        )
+        assert "pre_triennio_chiro" in r["dettaglio"]
+        assert "triennio_ipo_mora" in r["dettaglio"]
+        assert "post_ipo_legale" in r["dettaglio"]
+        assert "post_segmenti_legale" in r["dettaglio"]
+
+    def test_confini_esatti_triennio(self):
+        # Pignoramento 16/12/2021 → triennio 16/12/2018 → 16/12/2021
+        # data_inizio_mora = 16/12/2018 (giorno esatto inizio triennio)
+        # data_fine = 16/12/2021 (giorno esatto fine triennio)
+        # → tutto Fase 2, nessun pre, nessun post
+        r = ripartisci_credito(
+            capitale=10000,
+            tasso_mora=0.10,
+            data_inizio_mora=date(2018, 12, 16),
+            data_pignoramento=date(2021, 12, 16),
+            data_fine=date(2021, 12, 16),
+        )
+        assert "pre_triennio_chiro" not in r["dettaglio"]
+        assert "triennio_ipo_mora" in r["dettaglio"]
+        assert "post_ipo_legale" not in r["dettaglio"]
+        # Triennio = 1096 giorni (include 29/02/2020)
+        gg_attesi = 1096
+        atteso = interesse_semplice(10000, 0.10, gg_attesi)
+        assert r["ipotecario"] == pytest.approx(atteso)
 
     def test_quadratura_totale(self):
         # La somma di ipotecario + chirografario deve coincidere con la mora
@@ -223,7 +329,6 @@ class TestRipartisciCredito:
             capitale=capitale,
             tasso_mora=tasso_mora,
             data_inizio_mora=data_inizio,
-            data_stipula=self.DATA_STIPULA,
             data_pignoramento=self.DATA_PIGN,
             data_fine=data_fine,
         )
@@ -246,7 +351,6 @@ class TestCalcolaMoraUnificato:
             capitale_residuo=100000.0,
             tasso_mora=0.08,
             data_decadenza_effettiva=date(2022, 1, 20),
-            data_stipula=date(2018, 6, 15),
             data_pignoramento=date(2023, 9, 10),
             data_fine=date(2026, 6, 30),
         )

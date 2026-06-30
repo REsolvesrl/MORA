@@ -75,19 +75,37 @@ def tasso_legale_per_anno(anno):
 
 def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
     """
-    Calcola interessi al tasso legale spezzando il periodo
-    ad ogni 1° gennaio (pro-rata temporis).
+    Calcola interessi al tasso legale ex art. 1284 c.c. spezzando il periodo
+    ad ogni 1° gennaio (pro-rata temporis), perché il tasso legale cambia
+    ad ogni cambio d'anno solare.
+
+    Restituisce una tupla `(totale, segmenti)` dove `segmenti` è una lista
+    di dict, uno per anno solare attraversato, con le chiavi:
+        - "inizio":   date di inizio del segmento
+        - "fine":     date di fine del segmento (esclusa)
+        - "giorni":   numero di giorni del segmento
+        - "tasso":    tasso legale dell'anno (decimale, es. 0.025)
+        - "interesse": interesse maturato nel segmento (€)
     """
     totale = 0.0
+    segmenti = []
     cursore = data_inizio
     while cursore < data_fine:
         prossimo_capodanno = date(cursore.year + 1, 1, 1)
         fine_segmento = min(prossimo_capodanno, data_fine)
         gg = giorni_tra(cursore, fine_segmento)
         tasso = tasso_legale_per_anno(cursore.year)
-        totale += interesse_semplice(capitale, tasso, gg)
+        interesse = interesse_semplice(capitale, tasso, gg)
+        segmenti.append({
+            "inizio": cursore,
+            "fine": fine_segmento,
+            "giorni": gg,
+            "tasso": tasso,
+            "interesse": interesse,
+        })
+        totale += interesse
         cursore = fine_segmento
-    return totale
+    return totale, segmenti
 
 def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
     """
@@ -104,23 +122,28 @@ def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
     return rate
 
 # ==========================================================
-# 3. CALCOLO ANNATE IPOTECARIE (Art. 2855 c.c.)
+# 3. CALCOLO DEL TRIENNIO GARANTITO (Art. 2855 c.c.)
 # ==========================================================
 
-def calcola_triennio(data_stipula, data_pignoramento):
+def calcola_triennio(data_pignoramento):
     """
-    Individua l'annata ipotecaria in corso al pignoramento.
-    Le annate decorrono dal giorno/mese di stipula.
+    Triennio garantito ex art. 2855 c.c.: i **3 anni esatti che precedono
+    la data del pignoramento**.
+
+    Esempi:
+      - pignoramento 16/12/2021 → triennio 16/12/2018 → 16/12/2021
+      - pignoramento 10/09/2023 → triennio 10/09/2020 → 10/09/2023
+
+    Restituisce `(inizio_triennio, fine_triennio)` dove
+    `fine_triennio` coincide con la data del pignoramento e
+    `inizio_triennio = data_pignoramento - 3 anni`.
+
+    Durata in giorni: 1095 (anno comune) o 1096 (se il periodo
+    attraversa un 29 febbraio).
     """
-    anni_trascorsi = data_pignoramento.year - data_stipula.year
-    inizio_annata_corrente = data_stipula + relativedelta(years=anni_trascorsi)
-    if inizio_annata_corrente > data_pignoramento:
-        inizio_annata_corrente -= relativedelta(years=1)
-
-    fine_annata_corrente = inizio_annata_corrente + relativedelta(years=1)
-    inizio_triennio = inizio_annata_corrente - relativedelta(years=2)
-
-    return inizio_triennio, inizio_annata_corrente, fine_annata_corrente
+    inizio_triennio = data_pignoramento - relativedelta(years=3)
+    fine_triennio = data_pignoramento
+    return inizio_triennio, fine_triennio
 
 # ==========================================================
 # 4. RIPARTIZIONE IPOTECARIO / CHIROGRAFARIO (Art. 2855 c.c.)
@@ -128,21 +151,26 @@ def calcola_triennio(data_stipula, data_pignoramento):
 # ==========================================================
 
 def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
-                       data_stipula, data_pignoramento, data_fine):
+                       data_pignoramento, data_fine):
     """
     Filtro Art. 2855 c.c. applicato a una "voce" di interessi (rata o capitale).
-    Divide gli interessi in:
-    - PRE-TRIENNIO: chirografario @ tasso mora
-    - TRIENNIO: ipotecario @ tasso mora
-    - POST-TRIENNIO: ipotecario @ tasso legale + chirografario (differenza)
+
+    Divide gli interessi in tre fasi rispetto al **triennio garantito**
+    (= i 3 anni esatti che precedono il pignoramento):
+
+    - FASE 1 — PRE-TRIENNIO: interessi anteriori a (pignoramento − 3 anni).
+      Degradano interamente a chirografario, pur restando al tasso di mora.
+    - FASE 2 — TRIENNIO: interessi maturati nei 3 anni precedenti il
+      pignoramento. Ipotecari al tasso di mora pattuito.
+    - FASE 3 — POST-TRIENNIO: interessi maturati dopo il pignoramento.
+      La quota al tasso legale resta ipotecaria; l'eccedenza (mora − legale)
+      diventa chirografaria. Il tasso legale è applicato pro-rata anno per anno.
     """
-    inizio_triennio, _, fine_annata_pign = calcola_triennio(
-        data_stipula, data_pignoramento
-    )
+    inizio_triennio, fine_triennio = calcola_triennio(data_pignoramento)
 
     risultato = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
 
-    # --- PRE-TRIENNIO (chirografario @ mora) ---
+    # --- FASE 1 — PRE-TRIENNIO (chirografario @ mora) ---
     if data_inizio_mora < inizio_triennio:
         fine_pre = min(inizio_triennio, data_fine)
         gg = giorni_tra(data_inizio_mora, fine_pre)
@@ -150,19 +178,21 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
         risultato["chirografario"] += int_pre
         risultato["dettaglio"]["pre_triennio_chiro"] = int_pre
 
-    # --- TRIENNIO (ipotecario @ mora) ---
+    # --- FASE 2 — TRIENNIO (ipotecario @ mora) ---
     inizio_t = max(data_inizio_mora, inizio_triennio)
-    fine_t = min(fine_annata_pign, data_fine)
+    fine_t = min(fine_triennio, data_fine)
     if fine_t > inizio_t:
         gg = giorni_tra(inizio_t, fine_t)
         int_triennio = interesse_semplice(capitale, tasso_mora, gg)
         risultato["ipotecario"] += int_triennio
         risultato["dettaglio"]["triennio_ipo_mora"] = int_triennio
 
-    # --- POST-TRIENNIO (ipotecario @ legale, chiro = differenza) ---
-    inizio_post = max(data_inizio_mora, fine_annata_pign)
+    # --- FASE 3 — POST-TRIENNIO (ipotecario @ legale, chiro = mora − legale) ---
+    inizio_post = max(data_inizio_mora, fine_triennio)
     if data_fine > inizio_post:
-        int_legale = interesse_legale_pro_rata(capitale, inizio_post, data_fine)
+        int_legale, segmenti_legale = interesse_legale_pro_rata(
+            capitale, inizio_post, data_fine
+        )
         gg = giorni_tra(inizio_post, data_fine)
         int_mora_post = interesse_semplice(capitale, tasso_mora, gg)
 
@@ -170,6 +200,7 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
         risultato["chirografario"] += (int_mora_post - int_legale)
         risultato["dettaglio"]["post_ipo_legale"] = int_legale
         risultato["dettaglio"]["post_chiro_diff"] = int_mora_post - int_legale
+        risultato["dettaglio"]["post_segmenti_legale"] = segmenti_legale
 
     return risultato
 
@@ -195,19 +226,21 @@ def _accumula(totale, parziale, chiave_dettaglio):
 def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            capitale_residuo, tasso_mora,
                            data_decadenza_effettiva,
-                           data_stipula, data_pignoramento, data_fine):
+                           data_pignoramento, data_fine):
     """
     MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
     L'unica differenza tra i due casi è 'data_decadenza_effettiva':
         - CASO A -> Data Lettera DBT
         - CASO B -> Data Notifica Precetto
 
-    FASE 1 (Rate): da 'data_prima_rata' a 'data_decadenza_effettiva'.
+    PARTE RATE: da 'data_prima_rata' a 'data_decadenza_effettiva'.
         Mora su ogni singola rata, dalla sua scadenza fino alla decadenza.
-    FASE 2 (Capitale): da 'data_decadenza_effettiva' a 'data_fine'.
+    PARTE CAPITALE: da 'data_decadenza_effettiva' a 'data_fine'.
         Mora sull'INTERO capitale residuo.
 
-    Entrambe le fasi passano per il filtro Art. 2855 c.c.
+    Entrambe le parti passano per il filtro Art. 2855 c.c., che le ripartisce
+    nelle 3 fasi (pre-triennio, triennio, post-triennio) rispetto al
+    triennio garantito (3 anni a ritroso dal pignoramento).
     """
     totale = {
         "ipotecario": 0.0,
@@ -237,7 +270,6 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
             capitale=rata["importo"],
             tasso_mora=tasso_mora,
             data_inizio_mora=rata["data_scadenza"],
-            data_stipula=data_stipula,
             data_pignoramento=data_pignoramento,
             data_fine=data_decadenza_effettiva   # <-- la rata corre fino alla decadenza
         )
@@ -257,16 +289,15 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
 
     totale["dettaglio"]["FASE_1_rate"] = dettaglio_fase1
 
-    # ---------- FASE 2: intero capitale residuo dalla decadenza ----------
-    rip_fase2 = ripartisci_credito(
+    # ---------- PARTE CAPITALE: intero capitale residuo dalla decadenza ----------
+    rip_capitale = ripartisci_credito(
         capitale=capitale_residuo,
         tasso_mora=tasso_mora,
         data_inizio_mora=data_decadenza_effettiva,  # <-- parte dalla decadenza
-        data_stipula=data_stipula,
         data_pignoramento=data_pignoramento,
         data_fine=data_fine
     )
-    totale = _accumula(totale, rip_fase2, "FASE_2_capitale_residuo")
+    totale = _accumula(totale, rip_capitale, "FASE_2_capitale_residuo")
 
     return totale
 
