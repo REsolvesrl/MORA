@@ -187,19 +187,133 @@ def carica_piano_da_dataframe(df):
     return piano
 
 
+def _riconosci_header(header_row):
+    """
+    Da una lista di stringhe (intestazione di una tabella PDF) restituisce
+    un dict {indice_colonna: nome_standard} per le colonne riconosciute.
+    Ritorna {} se non c'è nessun match.
+    """
+    risultato = {}
+    for idx, cell in enumerate(header_row or []):
+        if cell is None:
+            continue
+        # PDF spesso ha header su 2 righe ("Quota\nCapitale"): collasso \n
+        cell_clean = re.sub(r"\s+", " ", str(cell)).strip()
+        norm = _normalizza_nome(cell_clean)
+        std = ALIASES.get(norm)
+        if std and std not in risultato.values():
+            risultato[idx] = std
+    return risultato
+
+
+def carica_piano_da_pdf(file_obj):
+    """
+    Estrae il piano di ammortamento da un file PDF "vettoriale" (cioè
+    generato dal gestionale della banca, non scansionato).
+
+    Strategia:
+      1) Apre il PDF con pdfplumber.
+      2) Per ogni pagina estrae le tabelle (page.extract_tables()).
+      3) Riconosce la prima riga di ogni tabella come intestazione e
+         verifica che contenga le colonne richieste (data + almeno una
+         tra quota_capitale/quota_interessi).
+      4) Concatena le righe dati di tutte le tabelle riconosciute.
+      5) Passa il DataFrame al parser comune.
+
+    Solleva ValueError in caso di PDF scansionato, layout non tabellare
+    o impossibilità di riconoscere colonne note.
+    """
+    try:
+        import pdfplumber
+    except ImportError as e:
+        raise ValueError(
+            "Libreria pdfplumber non installata. "
+            "Aggiungi 'pdfplumber' a requirements.txt."
+        ) from e
+
+    raw = file_obj.read() if hasattr(file_obj, "read") else file_obj
+    if not raw:
+        raise ValueError("Il PDF è vuoto.")
+
+    righe_raccolte = []
+    nomi_colonne_standard = None
+
+    try:
+        pdf_ctx = pdfplumber.open(io.BytesIO(raw))
+    except Exception as e:
+        raise ValueError(
+            f"Impossibile aprire il PDF (file corrotto o non valido): {e}"
+        )
+
+    with pdf_ctx as pdf:
+        for pagina in pdf.pages:
+            tabelle = pagina.extract_tables() or []
+            for tabella in tabelle:
+                if not tabella or len(tabella) < 2:
+                    continue
+                header = tabella[0]
+                mapping = _riconosci_header(header)
+                # Servono almeno data + (capitale o interessi)
+                cols = set(mapping.values())
+                if "data_scadenza" not in cols:
+                    continue
+                if "quota_capitale" not in cols and "quota_interessi" not in cols:
+                    continue
+                # Memorizzo i nomi standard nell'ordine
+                indici_ordinati = sorted(mapping.keys())
+                nomi_colonne_standard = [mapping[i] for i in indici_ordinati]
+                # Aggiungo le righe dati (salto la prima = header)
+                for riga in tabella[1:]:
+                    if riga is None:
+                        continue
+                    # Salta righe di header ripetuto (matching > 50% nomi colonna)
+                    norm_celle = [
+                        _normalizza_nome(c) if c else ""
+                        for c in riga
+                    ]
+                    matches = sum(1 for nc in norm_celle if nc in ALIASES)
+                    if matches >= max(2, len(mapping) // 2):
+                        continue
+                    valori = [
+                        riga[i] if i < len(riga) else None
+                        for i in indici_ordinati
+                    ]
+                    # Salta righe vuote / totali
+                    if all(v is None or str(v).strip() == "" for v in valori):
+                        continue
+                    righe_raccolte.append(valori)
+
+    if not righe_raccolte or not nomi_colonne_standard:
+        raise ValueError(
+            "Nessuna tabella riconoscibile trovata nel PDF. "
+            "Verifica che il PDF NON sia una scansione (servirebbe OCR) "
+            "e che le intestazioni delle colonne includano almeno "
+            "'Data Scadenza' e 'Quota Capitale' (o 'Quota Interessi'). "
+            "In alternativa, esporta il piano in CSV/Excel dalla banca."
+        )
+
+    df = pd.DataFrame(righe_raccolte, columns=nomi_colonne_standard)
+    # Filtro righe in cui data_scadenza non è interpretabile (footer/note)
+    df["data_scadenza"] = df["data_scadenza"].astype(str).str.strip()
+    df = df[df["data_scadenza"].str.match(
+        r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$", na=False
+    )].reset_index(drop=True)
+    if df.empty:
+        raise ValueError(
+            "Tabelle trovate ma nessuna riga con date valide. "
+            "Verifica il formato del PDF (atteso: dd/mm/yyyy)."
+        )
+    return carica_piano_da_dataframe(df)
+
+
 def carica_piano_da_file(uploaded_file):
     """
     Riceve un file-like (es. da st.file_uploader) e ritorna il piano
-    normalizzato. Riconosce CSV (.csv) ed Excel (.xlsx, .xls).
-    Per i PDF restituisce un errore esplicito.
+    normalizzato. Riconosce CSV (.csv), Excel (.xlsx, .xls), PDF (.pdf).
     """
     name = (getattr(uploaded_file, "name", "") or "").lower()
     if name.endswith(".pdf"):
-        raise ValueError(
-            "Estrazione automatica da PDF non supportata in questa versione. "
-            "Esporta il piano di ammortamento in CSV o Excel dalla tua banca "
-            "per garantire la massima precisione."
-        )
+        return carica_piano_da_pdf(uploaded_file)
     if name.endswith(".csv"):
         # Provo prima ';' (separatore italiano), poi ','
         raw = uploaded_file.read()
@@ -218,6 +332,5 @@ def carica_piano_da_file(uploaded_file):
         df = pd.read_excel(uploaded_file)
         return carica_piano_da_dataframe(df)
     raise ValueError(
-        "Formato file non supportato. Carica CSV, Excel (.xlsx) o "
-        "esporta da PDF e ricarica come CSV/Excel."
+        "Formato file non supportato. Carica PDF, CSV o Excel (.xlsx)."
     )

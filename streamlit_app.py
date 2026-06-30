@@ -306,20 +306,21 @@ with tab1:
     # ---------- MODO C: Caricamento da file ----------
     elif modalita_piano.startswith("📤"):
         st.info(
-            "📌 **Suggerimento per massima precisione:** esporta il piano "
-            "di ammortamento dalla tua banca in formato **CSV o Excel**. "
-            "L'estrazione automatica da PDF non è garantita (i layout "
-            "variano da banca a banca): se hai solo il PDF, riconvertilo "
-            "manualmente in CSV/Excel prima di caricarlo qui.\n\n"
+            "📌 **Formati supportati:** PDF, CSV, Excel (.xlsx).\n\n"
+            "- **PDF**: estrazione automatica delle tabelle. Funziona con "
+            "PDF *vettoriali* generati dal gestionale della banca "
+            "(la maggior parte). Non funziona con PDF *scansionati* "
+            "(servirebbe OCR): in quel caso esporta in CSV/Excel.\n"
+            "- **CSV / Excel**: lettura diretta, massima precisione.\n\n"
             "**Colonne attese** (case-insensitive, riconosce sinonimi "
             "comuni): `Data Scadenza`, `Quota Capitale`, `Quota Interessi`. "
             "Opzionali: `Capitale Residuo`, `Num Rata`."
         )
         file_piano = st.file_uploader(
             "📎 Carica il piano di ammortamento",
-            type=["csv", "xlsx", "xls", "pdf"],
-            help="CSV o Excel consigliati. Il PDF restituirà un messaggio "
-                 "di errore guidato.",
+            type=["pdf", "csv", "xlsx", "xls"],
+            help="Formato consigliato: PDF della banca o esportazione "
+                 "CSV/Excel. Per i PDF scansionati esporta in CSV/Excel.",
         )
         if file_piano is not None:
             try:
