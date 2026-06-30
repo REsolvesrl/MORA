@@ -58,6 +58,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Date comuni")
     data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15),
+                                 min_value=date(2000, 1, 1),
                                  format="DD/MM/YYYY")
     data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
                                       format="DD/MM/YYYY")
