@@ -394,7 +394,7 @@ with tab1:
         step=1000.0,
         help="Intero capitale esigibile alla data di decadenza/precetto. "
              "Su questo importo decorre la mora dalla decadenza in poi. "
-             "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi."
+             "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi. "
              "Verificare piano di ammortamento."
     )
 
@@ -1102,7 +1102,7 @@ with tab3:
     st.divider()
 
     # ============================================================
-    # SLIDER MARGINE DI TRATTAZIVA
+    # SLIDER MARGINE DI TRATTATIVA
     # ============================================================
     st.markdown("#### 🎯 Margine di Trattativa / Sconto")
     margine = st.slider(
@@ -1194,7 +1194,7 @@ with tab3:
 
     # IRR annualizzato — il delta interessi è incassato A FINE PROCEDURA
     # rendimento di periodo = Utile Totale / Capitale, poi annualizzato sui mesi
-    irrennuale = ((1 + roe) ** (12 / durata_mesi) - 1) if durata_mesi > 0 else 0
+    irr_annuale = ((1 + roe) ** (12 / durata_mesi) - 1) if durata_mesi > 0 else 0
 
     # --- Waterfall esplicito della composizione dell'utile ---
     st.markdown("##### 🧮 Composizione dell'Utile")
@@ -1223,7 +1223,7 @@ with tab3:
               help="Utile Lordo + Utile da Interessi Maturati")
     m3.metric("📊 ROE", f"{roe*100:.2f}%",
               help="Return on Equity = Utile Totale / Capitale Investito Totale")
-    m4.metric("📈 IRR Annualizzato", f"{irrennuale*100:.2f}%",
+    m4.metric("📈 IRR Annualizzato", f"{irr_annuale*100:.2f}%",
               help=f"Rendimento annualizzato su {durata_mesi} mesi. "
                    f"Il delta interessi è incassato a fine procedura.")
     
