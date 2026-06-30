@@ -806,7 +806,7 @@ with tab1:
             st.markdown(f"""
             **Periodo:** data prima rata scaduta → **{inizio_triennio.strftime('%d/%m/%Y')}** (inizio triennio)
 
-            **Capitale di riferimento:** singola rata insolta (importo: **€ {importo_rata:,.2f}**)
+            **Capitale di riferimento:** singola rata insoluta (importo: **€ {importo_rata:,.2f}**)
 
             **Tasso applicato:** {(tasso_mora*100):.2f}% (tasso di mora pattuito)
 
@@ -833,7 +833,7 @@ with tab1:
             **Giorni del triennio:** `{gg_triennio}` giorni (durata esatta 3 annate)
 
             **Capitale di riferimento:**
-            - Per le **rate scadute**: singola rata insolta (**€ {importo_rata:,.2f}**)
+            - Per le **rate scadute**: singola rata insoluta (**€ {importo_rata:,.2f}**)
             - Per il **capitale residuo**: **€ {capitale_residuo:,.2f}**
 
             **Tasso applicato:** {(tasso_mora*100):.2f}% (tasso di mora pattuito — pieno)
