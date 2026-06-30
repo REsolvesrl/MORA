@@ -13,6 +13,7 @@ from calcoli import (
     estrai_rate_insolute_da_piano,
     genera_piano_ammortamento,
 )
+from piano_io import carica_piano_da_file
 from pdf_export import (
     genera_report_pdf,
     genera_report_pdf_spese,
@@ -223,26 +224,34 @@ with tab1:
         )
 
     # ==========================================================
-    # 📐 RICOSTRUZIONE PIANO DI AMMORTAMENTO (anti-anatocismo)
+    # 📐 PIANO DI AMMORTAMENTO (anti-anatocismo)
     # ==========================================================
     st.divider()
-    st.markdown("### 📐 Ricostruzione Piano di Ammortamento (anti-anatocismo)")
-    usa_piano = st.checkbox(
-        "🛡️ Calcola la mora di Fase 1 **solo sulla Quota Capitale** "
-        "(no anatocismo ex art. 1283 c.c.)",
-        value=False,
+    st.markdown("### 📐 Piano di Ammortamento (anti-anatocismo)")
+    modalita_piano = st.radio(
+        "Come vuoi gestire il piano di ammortamento?",
+        options=[
+            "🚫 Non usare un piano (mora sull'intera rata)",
+            "🧮 Ricostruzione algoritmica (alla francese)",
+            "📤 Carica piano reale da file (CSV / Excel)",
+        ],
+        index=0,
         help=(
-            "Se attivato, il software ricostruisce l'intero piano di "
-            "ammortamento alla francese del mutuo originario, estrae per "
-            "ciascuna rata insoluta la Quota Capitale e calcola la mora "
-            "esclusivamente su quella. La Quota Interessi della singola "
-            "rata viene messa da parte (sommata al debito finale senza "
-            "produrre ulteriore mora)."
+            "**Non usare:** mora calcolata sull'intero importo della rata "
+            "(comportamento storico).\n\n"
+            "**Ricostruzione algoritmica:** il software ricostruisce il "
+            "piano alla francese dai parametri del mutuo (capitale, TAN, "
+            "durata).\n\n"
+            "**Carica da file:** il software legge il piano REALE della "
+            "banca (CSV o Excel). Massima precisione: evita lievi "
+            "differenze rispetto al piano teorico."
         ),
     )
 
     piano_ammortamento = None
-    if usa_piano:
+
+    # ---------- MODO B: Ricostruzione algoritmica ----------
+    if modalita_piano.startswith("🧮"):
         m1, m2, m3 = st.columns(3)
         capitale_originario = m1.number_input(
             "💶 Capitale Originario Erogato (€)",
@@ -290,68 +299,100 @@ with tab1:
                 f"{fmt_eur(sum(r['quota_capitale'] for r in piano_ammortamento))} "
                 f"(= capitale erogato ✅)."
             )
-
-            # Estrai e mostra le rate insolute
-            rate_insolute = estrai_rate_insolute_da_piano(
-                piano_ammortamento,
-                data_prima_rata, data_decadenza_effettiva,
-            )
-            if rate_insolute:
-                st.caption(
-                    f"🔎 **{len(rate_insolute)} rate insolute** intercettate "
-                    f"nel periodo {data_prima_rata.strftime('%d/%m/%Y')} → "
-                    f"{data_decadenza_effettiva.strftime('%d/%m/%Y')}: "
-                    f"dalla rata #{rate_insolute[0]['num_rata']} alla "
-                    f"#{rate_insolute[-1]['num_rata']} del piano."
-                )
-            else:
-                st.warning(
-                    "⚠️ Nessuna rata del piano cade nell'intervallo "
-                    "prima rata insoluta → decadenza. Verifica le date "
-                    "del mutuo e della prima rata insoluta."
-                )
-
-            with st.expander("📊 Visualizza Piano di Ammortamento Ricostruito"):
-                df_piano = pd.DataFrame([
-                    {
-                        "Num_Rata": r["num_rata"],
-                        "Data_Scadenza": r["data_scadenza"].strftime("%d/%m/%Y"),
-                        "Quota_Interessi": r["quota_interessi"],
-                        "Quota_Capitale": r["quota_capitale"],
-                        "Importo_Rata": r["importo_rata"],
-                        "Capitale_Residuo": r["capitale_residuo"],
-                        "Insoluta": "🔴" if any(
-                            ri["num_rata"] == r["num_rata"]
-                            for ri in rate_insolute
-                        ) else "",
-                    }
-                    for r in piano_ammortamento
-                ])
-                st.dataframe(
-                    df_piano,
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "Quota_Interessi": st.column_config.NumberColumn(
-                            "Quota Interessi (€)", format="%.2f"
-                        ),
-                        "Quota_Capitale": st.column_config.NumberColumn(
-                            "Quota Capitale (€)", format="%.2f"
-                        ),
-                        "Importo_Rata": st.column_config.NumberColumn(
-                            "Importo Rata (€)", format="%.2f"
-                        ),
-                        "Capitale_Residuo": st.column_config.NumberColumn(
-                            "Capitale Residuo (€)", format="%.2f"
-                        ),
-                    },
-                )
-                st.caption(
-                    "🔴 = rata insoluta intercettata (Fase 1). La mora "
-                    "verrà calcolata solo sulla Quota Capitale."
-                )
         except Exception as e:
             st.error(f"⛔ Generazione piano fallita: {e}")
             piano_ammortamento = None
+
+    # ---------- MODO C: Caricamento da file ----------
+    elif modalita_piano.startswith("📤"):
+        st.info(
+            "📌 **Suggerimento per massima precisione:** esporta il piano "
+            "di ammortamento dalla tua banca in formato **CSV o Excel**. "
+            "L'estrazione automatica da PDF non è garantita (i layout "
+            "variano da banca a banca): se hai solo il PDF, riconvertilo "
+            "manualmente in CSV/Excel prima di caricarlo qui.\n\n"
+            "**Colonne attese** (case-insensitive, riconosce sinonimi "
+            "comuni): `Data Scadenza`, `Quota Capitale`, `Quota Interessi`. "
+            "Opzionali: `Capitale Residuo`, `Num Rata`."
+        )
+        file_piano = st.file_uploader(
+            "📎 Carica il piano di ammortamento",
+            type=["csv", "xlsx", "xls", "pdf"],
+            help="CSV o Excel consigliati. Il PDF restituirà un messaggio "
+                 "di errore guidato.",
+        )
+        if file_piano is not None:
+            try:
+                piano_ammortamento = carica_piano_da_file(file_piano)
+                somma_qc = sum(r["quota_capitale"] for r in piano_ammortamento)
+                st.success(
+                    f"✅ Piano caricato dal file **{file_piano.name}**: "
+                    f"**{len(piano_ammortamento)} rate**. "
+                    f"Somma Quote Capitale = **{fmt_eur(somma_qc)}**."
+                )
+            except ValueError as e:
+                st.error(f"⛔ {e}")
+                piano_ammortamento = None
+            except Exception as e:
+                st.error(f"⛔ Errore imprevisto durante il caricamento: {e}")
+                piano_ammortamento = None
+
+    # ---------- Pannello comune: anteprima piano + rate insolute ----------
+    if piano_ammortamento is not None:
+        rate_insolute = estrai_rate_insolute_da_piano(
+            piano_ammortamento, data_prima_rata, data_decadenza_effettiva,
+        )
+        if rate_insolute:
+            st.caption(
+                f"🔎 **{len(rate_insolute)} rate insolute** intercettate nel "
+                f"periodo {data_prima_rata.strftime('%d/%m/%Y')} → "
+                f"{data_decadenza_effettiva.strftime('%d/%m/%Y')}: dalla "
+                f"rata #{rate_insolute[0]['num_rata']} alla "
+                f"#{rate_insolute[-1]['num_rata']} del piano."
+            )
+        else:
+            st.warning(
+                "⚠️ Nessuna rata del piano cade nell'intervallo prima rata "
+                "insoluta → decadenza. Verifica le date del mutuo e/o della "
+                "prima rata insoluta."
+            )
+
+        with st.expander("📊 Visualizza Piano di Ammortamento"):
+            ids_insolute = {ri["num_rata"] for ri in rate_insolute}
+            df_piano = pd.DataFrame([
+                {
+                    "Num_Rata": r["num_rata"],
+                    "Data_Scadenza": r["data_scadenza"].strftime("%d/%m/%Y"),
+                    "Quota_Interessi": r["quota_interessi"],
+                    "Quota_Capitale": r["quota_capitale"],
+                    "Importo_Rata": r["importo_rata"],
+                    "Capitale_Residuo": r["capitale_residuo"],
+                    "Insoluta": "🔴" if r["num_rata"] in ids_insolute else "",
+                }
+                for r in piano_ammortamento
+            ])
+            st.dataframe(
+                df_piano,
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "Quota_Interessi": st.column_config.NumberColumn(
+                        "Quota Interessi (€)", format="%.2f"
+                    ),
+                    "Quota_Capitale": st.column_config.NumberColumn(
+                        "Quota Capitale (€)", format="%.2f"
+                    ),
+                    "Importo_Rata": st.column_config.NumberColumn(
+                        "Importo Rata (€)", format="%.2f"
+                    ),
+                    "Capitale_Residuo": st.column_config.NumberColumn(
+                        "Capitale Residuo (€)", format="%.2f"
+                    ),
+                },
+            )
+            st.caption(
+                "🔴 = rata insoluta intercettata (Fase 1). La mora verrà "
+                "calcolata solo sulla Quota Capitale di queste rate."
+            )
 
     st.divider()
 
