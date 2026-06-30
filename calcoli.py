@@ -262,7 +262,11 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
 
     dettaglio_fase1 = {
         "numero_rate_generate": len(rate_scadute),
-        "rate": {}
+        "rate": {},
+        # rate_breakdown: lista strutturata per il rendering tabellare.
+        # Ogni elemento contiene la singola rata con i giorni esatti di mora
+        # e l'interesse maturato (somma ipotecario + chirografario di Fase 1).
+        "rate_breakdown": [],
     }
 
     for i, rata in enumerate(rate_scadute):
@@ -286,6 +290,17 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         dettaglio_fase1["rate"][
             f"rata_{i+1}_({rata['data_scadenza'].strftime('%d/%m/%Y')})"
         ] = rip["dettaglio"]
+
+        # --- Breakdown rata per rata: giorni esatti + interesse maturato ---
+        giorni_mora_rata = giorni_tra(rata["data_scadenza"], data_decadenza_effettiva)
+        interesse_rata = rip["ipotecario"] + rip["chirografario"]
+        dettaglio_fase1["rate_breakdown"].append({
+            "i": i + 1,
+            "data_scadenza": rata["data_scadenza"],
+            "importo_rata": rata["importo"],
+            "giorni_mora": giorni_mora_rata,
+            "interesse_maturato": interesse_rata,
+        })
 
     totale["dettaglio"]["FASE_1_rate"] = dettaglio_fase1
 

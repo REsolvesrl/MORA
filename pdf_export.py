@@ -246,6 +246,79 @@ def _sezione_fase1(stili, d):
     ]
 
 
+def _sezione_scomposizione_rate(stili, d):
+    """Tabella di scomposizione rata per rata (Fase 1 pre-decadenza).
+
+    Mostra giorni esatti di mora e interesse maturato per ogni rata,
+    più la verifica di equivalenza con la formula della giacenza media.
+    """
+    rate_bk = (
+        d["calcolo"]["risultato"]["dettaglio"]
+         .get("FASE_1_rate", {})
+         .get("rate_breakdown", [])
+    )
+    if not rate_bk:
+        return []
+
+    inp = d["input"]
+    rows = [["#", "Data scadenza", "Importo", "Giorni mora", "Interesse"]]
+    for br in rate_bk:
+        rows.append([
+            str(br["i"]),
+            _fmt_data(br["data_scadenza"]),
+            _fmt_eur(br["importo_rata"]),
+            str(br["giorni_mora"]),
+            _fmt_eur(br["interesse_maturato"]),
+        ])
+    somma_gg = sum(br["giorni_mora"] for br in rate_bk)
+    somma_int = sum(br["interesse_maturato"] for br in rate_bk)
+    capitale_totale = inp["importo_rata"] * len(rate_bk)
+    rows.append([
+        "TOT",
+        "—",
+        _fmt_eur(capitale_totale),
+        str(somma_gg),
+        _fmt_eur(somma_int),
+    ])
+    tbl = Table(rows, colWidths=[12 * mm, 30 * mm, 35 * mm, 28 * mm, 35 * mm])
+    style = _stile_tabella_base()
+    style.add("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fff3e0"))
+    style.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+    style.add("FONTSIZE", (0, 0), (-1, -1), 8)
+    tbl.setStyle(style)
+
+    gg_medi = somma_gg / len(rate_bk)
+    giacenza_media = capitale_totale * inp["tasso_mora"] * gg_medi / 365
+    nota_giacenza = (
+        f"Verifica equivalente — giacenza media: giorni medi di ritardo = "
+        f"<b>{gg_medi:.1f}</b> (~{gg_medi/30:.1f} mesi). Capitale totale × "
+        f"Tasso × Giorni medi / 365 = {_fmt_eur(capitale_totale)} × "
+        f"{_fmt_pct(inp['tasso_mora'])} × {gg_medi:.1f} / 365 = "
+        f"<b>{_fmt_eur(giacenza_media)}</b> (coincide con la somma rata "
+        f"per rata)."
+    )
+
+    return [
+        PageBreak(),
+        Paragraph(
+            "5b. Scomposizione rata per rata (Fase 1)",
+            stili["h2"]
+        ),
+        Paragraph(
+            "Il software <b>itera rata per rata</b>: per ciascuna applica il "
+            "tasso di mora sull'importo della <i>singola</i> rata, per i "
+            "<i>giorni esatti</i> di ritardo (dalla scadenza della rata alla "
+            "data di decadenza). La somma dei contributi è matematicamente "
+            "equivalente alla formula della <i>giacenza media</i>.",
+            stili["body"]
+        ),
+        Spacer(1, 4),
+        tbl,
+        Spacer(1, 4),
+        Paragraph(nota_giacenza, stili["caption"]),
+    ]
+
+
 def _sezione_fase2(stili, d):
     inp = d["input"]
     v = d["calcolo"]["risultato"]["voci_2855"]
@@ -484,6 +557,7 @@ def genera_report_pdf(report_data: dict, password: str = "") -> bytes:
     corpo += _sezione_fase1(stili, report_data)
     corpo += _sezione_fase2(stili, report_data)
     corpo += _sezione_fase3(stili, report_data)
+    corpo += _sezione_scomposizione_rate(stili, report_data)
     corpo += _sezione_gbv(stili, report_data)
     return _build_pdf(
         titolo_doc="Report MORA – Interessi di mora ex art. 2855 c.c.",

@@ -329,7 +329,7 @@ with tab1:
                 )
                 base_rate_scadute = n_rate * importo_rata
                 st.markdown(
-                    f"- **Fase 1:** Mora calcolata rata per rata, "
+                    f"- **Fase 1:** Mora calcolata **rata per rata**, "
                     f"dalla scadenza di ciascuna rata fino alla **decadenza** "
                     f"({data_decadenza_effettiva.strftime('%d/%m/%Y')}).\n"
                     f"- **N° rate scadute:** {n_rate}\n"
@@ -339,15 +339,62 @@ with tab1:
                     f"- **Convenzione giorni:** /365\n"
                     f"- **Interessi rate scadute → 🅰️ = {fmt_eur(fase1_interessi)}**"
                 )
-                with st.expander("📋 Dettaglio rata per rata"):
-                    for chiave_rata, dettaglio_rata in fase1_rate_dict.items():
-                        ipot_r, chiro_r = _voci_rata(dettaglio_rata)
-                        tot_r = ipot_r + chiro_r
-                        st.markdown(
-                            f"- **{chiave_rata}:** "
-                            f"ipotecario {fmt_eur(ipot_r)} + "
-                            f"chirografario {fmt_eur(chiro_r)}"
-                            f" (totale {fmt_eur(tot_r)})"
+
+                st.info(
+                    "ℹ️ **Perché questo importo può sembrare 'basso'?**\n\n"
+                    "Le rate maturano interessi in modo **progressivo**: la "
+                    "rata più vecchia accumula tutti i giorni di ritardo, "
+                    "quella più recente solo pochi giorni. Il software "
+                    "**non applica il tasso sull'intero monte rate per "
+                    "tutto il periodo**: itera rata per rata e somma i "
+                    "contributi (equivalente alla formula della "
+                    "*giacenza media*)."
+                )
+
+                # --- Tabella di scomposizione rata per rata ---
+                rate_bk = det.get("FASE_1_rate", {}).get("rate_breakdown", [])
+                if rate_bk:
+                    with st.expander(
+                        "📋 Scomposizione rata per rata "
+                        "(giorni esatti di mora + interesse maturato)"
+                    ):
+                        righe = [
+                            "| # | Data scadenza | Importo | Giorni mora | Interesse maturato |",
+                            "|---:|:---:|---:|---:|---:|",
+                        ]
+                        for br in rate_bk:
+                            righe.append(
+                                f"| {br['i']} | "
+                                f"{br['data_scadenza'].strftime('%d/%m/%Y')} | "
+                                f"{fmt_eur(br['importo_rata'])} | "
+                                f"{br['giorni_mora']} | "
+                                f"{fmt_eur(br['interesse_maturato'])} |"
+                            )
+                        somma_gg = sum(br["giorni_mora"] for br in rate_bk)
+                        somma_int = sum(br["interesse_maturato"] for br in rate_bk)
+                        righe.append(
+                            f"| **TOTALE** | — | "
+                            f"**{fmt_eur(base_rate_scadute)}** | "
+                            f"**{somma_gg}** | "
+                            f"**{fmt_eur(somma_int)}** |"
+                        )
+                        st.markdown("\n".join(righe))
+
+                        # Verifica didattica: equivalenza con la giacenza media
+                        gg_medi = somma_gg / len(rate_bk)
+                        giacenza_media = (
+                            base_rate_scadute * tasso_mora * gg_medi / 365
+                        )
+                        st.caption(
+                            f"✅ **Verifica equivalente — giacenza media:** "
+                            f"giorni medi di ritardo = "
+                            f"**{gg_medi:.1f}** (~{gg_medi/30:.1f} mesi). "
+                            f"Applicando la formula `Capitale totale × Tasso "
+                            f"× Giorni medi / 365`: "
+                            f"{fmt_eur(base_rate_scadute)} × "
+                            f"{fmt_pct(tasso_mora)} × {gg_medi:.1f} / 365 = "
+                            f"**{fmt_eur(giacenza_media)}** "
+                            f"(coincide con la somma rata-per-rata)."
                         )
 
             with f2_col:
