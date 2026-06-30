@@ -53,6 +53,18 @@ streamlit run streamlit_app.py
 
 L'app si aprirà automaticamente nel browser su `http://localhost:8501`.
 
+## Esecuzione test
+
+I test coprono la logica di calcolo in `calcoli.py` (interesse semplice, interesse legale pro-rata, triennio ipotecario, ripartizione ex art. 2855 c.c., motore unificato, spese esecutive).
+
+```bash
+# Installa pytest (in aggiunta alle dipendenze runtime)
+pip install -r requirements-dev.txt
+
+# Esegui la suite
+pytest
+```
+
 ## Dipendenze
 
 - [streamlit](https://streamlit.io/) — framework UI
