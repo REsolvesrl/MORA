@@ -10,7 +10,11 @@ from calcoli import (
     calcola_triennio,
     calcola_mora_unificato,
 )
-from pdf_export import genera_report_pdf
+from pdf_export import (
+    genera_report_pdf,
+    genera_report_pdf_spese,
+    genera_report_pdf_npl,
+)
 
 # ==========================================================
 # FORMATTAZIONE NUMERICA IN STILE ITALIANO
@@ -840,6 +844,14 @@ with tab2:
         totale_spese = spese_vive_val + ctu_val + custode_val + pubblicita_val + spese_legali_nostre_val
         st.session_state["spese_future"] = totale_spese
 
+        voci_spese = {
+            "Spese vive (CU, trascrizioni, ecc.)": spese_vive_val,
+            "CTU (perizia di stima)": ctu_val,
+            "Custode / Professionista delegato": custode_val,
+            "Pubblicità asta (PVP)": pubblicita_val,
+            "Nostre spese legali": spese_legali_nostre_val,
+        }
+
     # ============================================================
     # VOCI MODIFICABILI — Mobiliare / Presso Terzi
     # ============================================================
@@ -869,6 +881,12 @@ with tab2:
         totale_spese = spese_vive_val + uff_legali_val + spese_legali_nostre_val
         st.session_state["spese_future"] = totale_spese
 
+        voci_spese = {
+            "Spese vive (notifica, bolli)": spese_vive_val,
+            "Ufficiale Giudiziario / Legali": uff_legali_val,
+            "Nostre spese legali": spese_legali_nostre_val,
+        }
+
     st.divider()
     st.metric("💸 TOTALE SPESE ESECUTIVE STIMATE", f"{fmt_eur(totale_spese)}")
 
@@ -879,9 +897,46 @@ with tab2:
         f"con priorità sul ricavato, prima ancora del creditore ipotecario."
     )
 
+    incidenza_pct = None
     if tipo_procedura == "Pignoramento Immobiliare" and valore_bene > 0:
-        incidenza = (totale_spese / valore_bene) * 100
-        st.caption(f"📉 Incidenza delle spese sul valore del bene: **{fmt_pct(incidenza/100, decimali=1)}**")
+        incidenza_pct = (totale_spese / valore_bene) * 100
+        st.caption(f"📉 Incidenza delle spese sul valore del bene: **{fmt_pct(incidenza_pct/100, decimali=1)}**")
+
+    # ==========================================================
+    # 📄 EXPORT PDF — Spese Esecutive
+    # ==========================================================
+    try:
+        report_spese = {
+            "tipo_procedura": tipo_procedura,
+            "valore_bene": valore_bene,
+            "voci": voci_spese,
+            "totale_spese": totale_spese,
+            "incidenza_pct": incidenza_pct,
+        }
+        st.session_state["pdf_spese_bytes"] = genera_report_pdf_spese(
+            report_spese, password=pdf_password
+        )
+        st.session_state["pdf_spese_protetto_da_pwd"] = bool(pdf_password)
+    except Exception as e:
+        st.warning(f"⚠️ Generazione PDF Spese non riuscita: {e}.")
+        st.session_state.pop("pdf_spese_bytes", None)
+
+    if "pdf_spese_bytes" in st.session_state:
+        st.divider()
+        protetto = st.session_state.get("pdf_spese_protetto_da_pwd", False)
+        st.caption(
+            "🔒 PDF cifrato con la password della sidebar. Copia/modifica disabilitate."
+            if protetto
+            else "🔒 PDF senza password di apertura, ma con copia/modifica disabilitate."
+        )
+        st.download_button(
+            label="📄 Esporta Spese Esecutive in PDF",
+            data=st.session_state["pdf_spese_bytes"],
+            file_name=f"Report_MORA_Spese_{date.today().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf",
+            type="primary",
+            key="dl_spese",
+        )
 
 # ----------------------------------------------------------
 # TAB 3 — ACQUISTO CREDITO NPL E STRALCIO
@@ -1178,3 +1233,57 @@ with tab3:
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # ==========================================================
+    # 📄 EXPORT PDF — Acquisto Credito NPL
+    # ==========================================================
+    try:
+        report_npl = {
+            "gbv_base": gbv_base,
+            "fonte_gbv": fonte_gbv,
+            "spese_procedura": spese_procedura,
+            "costi_acquisizione": costi_acquisizione,
+            "totale_spese_fisse": totale_spese_fisse,
+            "voci_costi_acq": {
+                "fronting": fronting_val,
+                "notaio": notaio_val,
+                "servicer": servicer_val,
+                "advisors": advisors_val,
+            },
+            "debito_reale_calcolato": debito,
+            "margine": margine,
+            "durata_mesi": durata_mesi,
+            "base_netta": base_netta,
+            "importo_margine": importo_margine,
+            "offerta_target": offerta_target,
+            "utile_lordo": utile_lordo,
+            "utile_interessi_maturati": utile_interessi_maturati,
+            "utile_totale": utile_totale,
+            "capitale_investito": capitale_investito,
+            "roe": roe,
+            "irr_annuale": irr_annuale,
+        }
+        st.session_state["pdf_npl_bytes"] = genera_report_pdf_npl(
+            report_npl, password=pdf_password
+        )
+        st.session_state["pdf_npl_protetto_da_pwd"] = bool(pdf_password)
+    except Exception as e:
+        st.warning(f"⚠️ Generazione PDF NPL non riuscita: {e}.")
+        st.session_state.pop("pdf_npl_bytes", None)
+
+    if "pdf_npl_bytes" in st.session_state:
+        st.divider()
+        protetto = st.session_state.get("pdf_npl_protetto_da_pwd", False)
+        st.caption(
+            "🔒 PDF cifrato con la password della sidebar. Copia/modifica disabilitate."
+            if protetto
+            else "🔒 PDF senza password di apertura, ma con copia/modifica disabilitate."
+        )
+        st.download_button(
+            label="📄 Esporta Analisi NPL in PDF",
+            data=st.session_state["pdf_npl_bytes"],
+            file_name=f"Report_MORA_NPL_{date.today().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf",
+            type="primary",
+            key="dl_npl",
+        )

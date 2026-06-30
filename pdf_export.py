@@ -115,9 +115,9 @@ def _stile_tabella_base():
 # SEZIONI DEL REPORT
 # ==========================================================
 
-def _sezione_header(stili):
+def _sezione_header(stili, titolo="⚖️ Report Interessi di Mora – Art. 2855 c.c."):
     el = [
-        Paragraph("⚖️ Report Interessi di Mora – Art. 2855 c.c.", stili["titolo"]),
+        Paragraph(titolo, stili["titolo"]),
         Paragraph(
             f"Generato il {datetime.now().strftime('%d/%m/%Y alle %H:%M')} – "
             "Resolve S.r.l.",
@@ -420,34 +420,27 @@ def _sezione_gbv(stili, d):
     ]
 
 
-def _sezione_footer(stili):
+def _sezione_footer(stili, nota=None):
+    default = (
+        "Documento generato da MORA – strumento di supporto al calcolo "
+        "degli interessi di mora ex art. 2855 c.c. I risultati devono "
+        "essere verificati da un professionista. Il presente documento "
+        "è cifrato: la copia del testo e la modifica sono disabilitate."
+    )
     return [
         Spacer(1, 12),
-        Paragraph(
-            "Documento generato da MORA – strumento di supporto al calcolo "
-            "degli interessi di mora ex art. 2855 c.c. I risultati devono "
-            "essere verificati da un professionista. Il presente documento "
-            "è cifrato: la copia del testo e la modifica sono disabilitate.",
-            stili["caption"]
-        ),
+        Paragraph(nota or default, stili["caption"]),
     ]
 
 
 # ==========================================================
-# API PUBBLICA
+# BUILDER COMUNE (encryption + header + footer + build)
 # ==========================================================
 
-def genera_report_pdf(report_data: dict, password: str = "") -> bytes:
-    """
-    Genera il report PDF e ritorna i bytes.
-
-    Restrizioni applicate: no copia, no modifica, no annotazioni.
-    La stampa resta consentita.
-
-    Se `password` è non vuota, diventa la user password (apertura).
-    La owner password è sempre impostata internamente per impedire la
-    rimozione delle restrizioni con strumenti standard.
-    """
+def _build_pdf(titolo_doc: str, titolo_header: str,
+               sezioni_corpo: list, password: str = "",
+               nota_footer: str = None) -> bytes:
+    """Compone un PDF (header + sezioni + footer), lo cifra, ritorna bytes."""
     enc = pdfencrypt.StandardEncryption(
         userPassword=password or "",
         ownerPassword="mora-owner-resolve-2026",
@@ -457,30 +450,234 @@ def genera_report_pdf(report_data: dict, password: str = "") -> bytes:
         canAnnotate=0,
         strength=128,
     )
-
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=18 * mm, rightMargin=18 * mm,
         topMargin=15 * mm, bottomMargin=15 * mm,
-        title="Report MORA – Interessi di mora ex art. 2855 c.c.",
+        title=titolo_doc,
         author="MORA / Resolve S.r.l.",
         encrypt=enc,
     )
-
     stili = _stili()
     elementi = []
-    elementi += _sezione_header(stili)
-    elementi += _sezione_input(stili, report_data)
-    elementi += _sezione_riepilogo(stili, report_data)
-    elementi += _sezione_didattica_triennio(stili, report_data)
-    elementi += _sezione_divisione_2855(stili, report_data)
-    elementi.append(PageBreak())
-    elementi += _sezione_fase1(stili, report_data)
-    elementi += _sezione_fase2(stili, report_data)
-    elementi += _sezione_fase3(stili, report_data)
-    elementi += _sezione_gbv(stili, report_data)
-    elementi += _sezione_footer(stili)
-
+    elementi += _sezione_header(stili, titolo_header)
+    elementi += sezioni_corpo
+    elementi += _sezione_footer(stili, nota_footer)
     doc.build(elementi)
     return buf.getvalue()
+
+
+# ==========================================================
+# API PUBBLICA – Tab 1 (Auditing e Check GBV)
+# ==========================================================
+
+def genera_report_pdf(report_data: dict, password: str = "") -> bytes:
+    """Report del Tab 1: ricostruzione del calcolo degli interessi di mora."""
+    stili = _stili()
+    corpo = []
+    corpo += _sezione_input(stili, report_data)
+    corpo += _sezione_riepilogo(stili, report_data)
+    corpo += _sezione_didattica_triennio(stili, report_data)
+    corpo += _sezione_divisione_2855(stili, report_data)
+    corpo.append(PageBreak())
+    corpo += _sezione_fase1(stili, report_data)
+    corpo += _sezione_fase2(stili, report_data)
+    corpo += _sezione_fase3(stili, report_data)
+    corpo += _sezione_gbv(stili, report_data)
+    return _build_pdf(
+        titolo_doc="Report MORA – Interessi di mora ex art. 2855 c.c.",
+        titolo_header="⚖️ Report Interessi di Mora – Art. 2855 c.c.",
+        sezioni_corpo=corpo,
+        password=password,
+    )
+
+
+# ==========================================================
+# API PUBBLICA – Tab 2 (Previsione Spese Esecutive)
+# ==========================================================
+
+def genera_report_pdf_spese(report_data: dict, password: str = "") -> bytes:
+    """Report del Tab 2: stima dei costi di una procedura esecutiva.
+
+    report_data deve contenere:
+      - tipo_procedura (str)
+      - valore_bene (float)
+      - voci (dict ordinato: nome_voce -> importo)
+      - totale_spese (float)
+      - incidenza_pct (float | None): incidenza % sul valore del bene
+    """
+    stili = _stili()
+    corpo = []
+
+    rows_input = [
+        ["Parametro", "Valore"],
+        ["Tipo di procedura", report_data["tipo_procedura"]],
+        ["Valore stimato dell'immobile / bene", _fmt_eur(report_data["valore_bene"])],
+    ]
+    tbl_input = Table(rows_input, colWidths=[90 * mm, 80 * mm])
+    tbl_input.setStyle(_stile_tabella_base())
+    corpo += [
+        Paragraph("1. Dati di input", stili["h2"]),
+        tbl_input,
+        Spacer(1, 8),
+    ]
+
+    rows_voci = [["Voce di spesa", "Importo"]]
+    for nome, importo in report_data["voci"].items():
+        rows_voci.append([nome, _fmt_eur(importo)])
+    rows_voci.append(["TOTALE SPESE ESECUTIVE STIMATE", _fmt_eur(report_data["totale_spese"])])
+    tbl_voci = Table(rows_voci, colWidths=[110 * mm, 60 * mm])
+    style_voci = _stile_tabella_base()
+    style_voci.add("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fff3e0"))
+    style_voci.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+    tbl_voci.setStyle(style_voci)
+    corpo += [
+        Paragraph("2. Voci di spesa", stili["h2"]),
+        tbl_voci,
+        Spacer(1, 8),
+    ]
+
+    nota_prededuz = (
+        "⚠️ Attenzione: proseguendo con la procedura, il debito aumenterà di "
+        f"circa {_fmt_eur(report_data['totale_spese'])}, riducendo il "
+        "ricavato netto della vendita. Questi costi sono in prededuzione "
+        "(art. 2770 c.c.) e vengono soddisfatti con priorità sul ricavato, "
+        "prima ancora del creditore ipotecario."
+    )
+    corpo += [
+        Paragraph("3. Note e considerazioni", stili["h2"]),
+        Paragraph(nota_prededuz, stili["body"]),
+    ]
+    if report_data.get("incidenza_pct") is not None:
+        corpo += [
+            Spacer(1, 4),
+            Paragraph(
+                f"📉 Incidenza delle spese sul valore del bene: "
+                f"<b>{_fmt_pct(report_data['incidenza_pct'] / 100, decimali=1)}</b>",
+                stili["body"]
+            ),
+        ]
+
+    return _build_pdf(
+        titolo_doc="Report MORA – Previsione Spese Esecutive",
+        titolo_header="🔮 Report Previsione Spese Esecutive",
+        sezioni_corpo=corpo,
+        password=password,
+    )
+
+
+# ==========================================================
+# API PUBBLICA – Tab 3 (Acquisto Credito NPL e DPO)
+# ==========================================================
+
+def genera_report_pdf_npl(report_data: dict, password: str = "") -> bytes:
+    """Report del Tab 3: simulazione acquisto credito NPL.
+
+    report_data deve contenere:
+      - gbv_base, fonte_gbv (str)
+      - spese_procedura, costi_acquisizione, totale_spese_fisse
+      - voci_costi_acq (dict: fronting/notaio/servicer/advisors)
+      - debito_reale_calcolato
+      - margine (frazione), durata_mesi
+      - base_netta, importo_margine, offerta_target
+      - utile_lordo, utile_interessi_maturati, utile_totale
+      - capitale_investito, roe, irr_annuale
+    """
+    stili = _stili()
+    corpo = []
+
+    rows_gbv = [
+        ["Parametro", "Valore"],
+        [f"GBV di partenza ({report_data['fonte_gbv']})", _fmt_eur(report_data["gbv_base"])],
+        ["Spese Procedura (Tab 2)", _fmt_eur(report_data["spese_procedura"])],
+        ["Debito Reale Calcolato (Tab 1)", _fmt_eur(report_data["debito_reale_calcolato"])],
+        ["Margine di trattativa / sconto", _fmt_pct(report_data["margine"], decimali=0)],
+        ["Durata stimata operazione", f"{report_data['durata_mesi']} mesi"],
+    ]
+    tbl_gbv = Table(rows_gbv, colWidths=[110 * mm, 60 * mm])
+    tbl_gbv.setStyle(_stile_tabella_base())
+    corpo += [
+        Paragraph("1. Dati di input", stili["h2"]),
+        tbl_gbv,
+        Spacer(1, 8),
+    ]
+
+    voci = report_data["voci_costi_acq"]
+    rows_acq = [
+        ["Voce", "Importo"],
+        ["Fronting", _fmt_eur(voci["fronting"])],
+        ["Notaio", _fmt_eur(voci["notaio"])],
+        ["Gestore credito (Servicer)", _fmt_eur(voci["servicer"])],
+        ["Advisors", _fmt_eur(voci["advisors"])],
+        ["TOTALE Costi Acquisizione", _fmt_eur(report_data["costi_acquisizione"])],
+        ["TOTALE Spese Fisse (Procedura + Acquisizione)", _fmt_eur(report_data["totale_spese_fisse"])],
+    ]
+    tbl_acq = Table(rows_acq, colWidths=[110 * mm, 60 * mm])
+    style_acq = _stile_tabella_base()
+    style_acq.add("BACKGROUND", (0, -2), (-1, -1), colors.HexColor("#f0f0f0"))
+    style_acq.add("FONTNAME", (0, -2), (-1, -1), "Helvetica-Bold")
+    tbl_acq.setStyle(style_acq)
+    corpo += [
+        Paragraph("2. Costi di acquisizione del credito", stili["h2"]),
+        tbl_acq,
+        Spacer(1, 8),
+    ]
+
+    rows_wf = [
+        ["Voce", "Importo"],
+        ["GBV di Partenza", _fmt_eur(report_data["gbv_base"])],
+        ["− Totale Spese Fisse", _fmt_eur(report_data["totale_spese_fisse"])],
+        ["= Base Netta pre-sconto", _fmt_eur(report_data["base_netta"])],
+        [f"− Sconto trattativa ({_fmt_pct(report_data['margine'], decimali=0)})",
+         _fmt_eur(report_data["importo_margine"])],
+        ["🎯 OFFERTA TARGET (Servicer)", _fmt_eur(report_data["offerta_target"])],
+    ]
+    tbl_wf = Table(rows_wf, colWidths=[110 * mm, 60 * mm])
+    style_wf = _stile_tabella_base()
+    style_wf.add("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fff3e0"))
+    style_wf.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+    tbl_wf.setStyle(style_wf)
+    corpo += [
+        Paragraph("3. Waterfall — Dal GBV all'Offerta Target", stili["h2"]),
+        tbl_wf,
+        Spacer(1, 8),
+    ]
+
+    rows_utile = [
+        ["Voce", "Importo"],
+        ["Utile Lordo (su GBV)", _fmt_eur(report_data["utile_lordo"])],
+        ["+ Utile da Interessi Maturati", _fmt_eur(report_data["utile_interessi_maturati"])],
+        ["= Utile Totale", _fmt_eur(report_data["utile_totale"])],
+        ["Capitale Investito Totale", _fmt_eur(report_data["capitale_investito"])],
+    ]
+    tbl_utile = Table(rows_utile, colWidths=[110 * mm, 60 * mm])
+    style_utile = _stile_tabella_base()
+    style_utile.add("BACKGROUND", (0, -2), (-1, -2), colors.HexColor("#fff3e0"))
+    style_utile.add("FONTNAME", (0, -2), (-1, -2), "Helvetica-Bold")
+    tbl_utile.setStyle(style_utile)
+    corpo += [
+        Paragraph("4. Composizione dell'Utile", stili["h2"]),
+        tbl_utile,
+        Spacer(1, 8),
+    ]
+
+    rows_metr = [
+        ["Metrica", "Valore"],
+        ["ROE (Return on Equity)", _fmt_pct(report_data["roe"])],
+        [f"IRR Annualizzato (su {report_data['durata_mesi']} mesi)",
+         _fmt_pct(report_data["irr_annuale"])],
+    ]
+    tbl_metr = Table(rows_metr, colWidths=[110 * mm, 60 * mm])
+    tbl_metr.setStyle(_stile_tabella_base())
+    corpo += [
+        Paragraph("5. Metriche finanziarie", stili["h2"]),
+        tbl_metr,
+    ]
+
+    return _build_pdf(
+        titolo_doc="Report MORA – Acquisto Credito NPL",
+        titolo_header="🤝 Report Acquisto Credito NPL e DPO",
+        sezioni_corpo=corpo,
+        password=password,
+    )
