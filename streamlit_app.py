@@ -131,7 +131,7 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     - TRIENNIO: ipotecario @ tasso mora
     - POST-TRIENNIO: ipotecario @ tasso legale + chirografario (differenza)
     """
-    inizio_triennio, inizio_annata_pign, fine_annata_pign = calcola_triennio(
+    inizio_triennio, _, fine_annata_pign = calcola_triennio(
         data_stipula, data_pignoramento
     )
 
@@ -726,52 +726,8 @@ with tab1:
             data_stipula, data_pignoramento
         )
 
-        # ---------- FASE 1 (Pre-Triennio) ----------
-        fase1_rate_dict = det.get("FASE_1_rate", {}).get("rate", {})
-
-        # Data di inizio mora della prima rata (primo elemento)
-        prima_rata_dates = [
-            k for k in fase1_rate_dict.keys()
-        ]
-        # data_inizio_fase1 = min data_scadenza tra le rate
-        def _parse_rata_date(key):
-            # key format: "rata_N_(DD/MM/YYYY)"
-            date_str = key.split("(")[1].rstrip(")")
-            from datetime import datetime
-            return datetime.strptime(date_str, "%d/%m/%Y").date()
-
-        data_inizio_fase1 = min(_parse_rata_date(k) for k in prima_rata_dates) if prima_rata_dates else data_decadenza_effettiva
-
-        # Somma giorni pre-triennio su tutte le rate (giorni che cada rata trascorre nel pre-triennio)
-        def _gg_pre_triennio(dr):
-            return dr.get("pre_triennio_chiro", 0.0)  # interesse pre-triennio calcolato per quella rata
-
-        gg_totali_pre = 0
-        for dr in fase1_rate_dict.values():
-            pre = dr.get("pre_triennio_chiro", 0.0)
-            if pre > 0:
-                rata_cap = None
-                # ricostruiamo il capitale della rata dal dettaglio (non direttamente disponibile
-                # in dr, ma lo recuperiamo dal totale degli interessi pre-triennio chirografario
-                # diviso il tasso — come proxy ragionevole per la dimostrazione)
-                gg_totali_pre += 1  # conteggio rate con quota pre-triennio
-        # Non abbiamo i giorni esatti per ogni rata senza il dato capitale,
-        # quindi mostriamo l'aggregato: tot interessi / (capitale*tasso/365) → giorni equivalenti
-        pre_chiro_tot = v["pre_chiro"]
-        gg_equivalenti_pre = (pre_chiro_tot / (capitale_residuo * tasso_mora / 365)) if (capitale_residuo * tasso_mora) > 0 else 0
-
         # ---------- FASE 2 (Triennio) ----------
         gg_triennio = (fine_annata_pign - inizio_triennio).days  # durata esatta triennio
-        gg_triennio_attivo = 0
-        # calcolo giorni effettivi nel triennio per la fase1 (rate) e fase2 (capitale)
-        gg_f1_triennio = 0
-        gg_f2_triennio = (fine_annata_pign - max(data_decadenza_effettiva, inizio_triennio)).days
-        if gg_f2_triennio < 0:
-            gg_f2_triennio = 0
-
-        for dr in fase1_rate_dict.values():
-            if dr.get("triennio_ipo_mora", 0.0) > 0:
-                gg_f1_triennio += 1  # rate che hanno quota nel triennio
 
         # ---------- FASE 3 (Post-Triennio) ----------
         gg_post = (data_fine - fine_annata_pign).days
