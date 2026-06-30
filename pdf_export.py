@@ -249,24 +249,86 @@ def _sezione_fase1(stili, d):
 def _sezione_scomposizione_rate(stili, d):
     """Tabella di scomposizione rata per rata (Fase 1 pre-decadenza).
 
-    Mostra giorni esatti di mora e interesse maturato per ogni rata,
-    più la verifica di equivalenza con la formula della giacenza media.
+    Due varianti:
+    - Senza piano di ammortamento: importo intero per rata + verifica
+      via giacenza media.
+    - Con piano (anti-anatocismo): mostra anche quota interessi (messa
+      da parte) e quota capitale (base di calcolo della mora) + nota
+      legale ex art. 1283 c.c.
     """
-    rate_bk = (
+    fase1 = (
         d["calcolo"]["risultato"]["dettaglio"]
          .get("FASE_1_rate", {})
-         .get("rate_breakdown", [])
     )
+    rate_bk = fase1.get("rate_breakdown", [])
     if not rate_bk:
         return []
 
     inp = d["input"]
+    usa_piano = fase1.get("usa_piano_ammortamento", False)
+
+    if usa_piano:
+        rows = [["# piano", "Data scad.", "Rata totale",
+                 "Q. interessi", "Q. capitale", "gg mora", "Interesse"]]
+        for br in rate_bk:
+            rows.append([
+                str(br["num_rata_piano"]),
+                _fmt_data(br["data_scadenza"]),
+                _fmt_eur(br["importo_rata_originale"]),
+                _fmt_eur(br["quota_interessi"]),
+                _fmt_eur(br["quota_capitale"]),
+                str(br["giorni_mora"]),
+                _fmt_eur(br["interesse_maturato"]),
+            ])
+        somma_rate = sum(br["importo_rata_originale"] for br in rate_bk)
+        somma_qi = sum(br["quota_interessi"] for br in rate_bk)
+        somma_qc = sum(br["quota_capitale"] for br in rate_bk)
+        somma_gg = sum(br["giorni_mora"] for br in rate_bk)
+        somma_int = sum(br["interesse_maturato"] for br in rate_bk)
+        rows.append([
+            "TOT", "—", _fmt_eur(somma_rate),
+            _fmt_eur(somma_qi), _fmt_eur(somma_qc),
+            str(somma_gg), _fmt_eur(somma_int),
+        ])
+        tbl = Table(rows, colWidths=[12 * mm, 22 * mm, 25 * mm,
+                                     25 * mm, 25 * mm, 15 * mm, 25 * mm])
+        style = _stile_tabella_base()
+        style.add("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fff3e0"))
+        style.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+        style.add("FONTSIZE", (0, 0), (-1, -1), 7)
+        tbl.setStyle(style)
+        intro = (
+            "🛡️ <b>Calcolo anti-anatocismo attivo (art. 1283 c.c.).</b><br/>"
+            "Il software itera rata per rata: per ciascuna rata insoluta "
+            "estratta dal piano di ammortamento, applica il tasso di mora "
+            "<b>esclusivamente sulla Quota Capitale</b> (non sull'intera "
+            "rata), per i giorni esatti di ritardo. La Quota Interessi è "
+            "tracciata a parte e va sommata al debito finale senza produrre "
+            "ulteriore mora."
+        )
+        nota_legale = (
+            "<b>Nota:</b> Al fine di evitare l'anatocismo, gli interessi di "
+            "mora sulle rate scadute sono stati calcolati esclusivamente "
+            "sulla Quota Capitale delle stesse, ricavata dal piano di "
+            "ammortamento."
+        )
+        return [
+            PageBreak(),
+            Paragraph("5b. Scomposizione rata per rata (Fase 1)", stili["h2"]),
+            Paragraph(intro, stili["body"]),
+            Spacer(1, 4),
+            tbl,
+            Spacer(1, 4),
+            Paragraph(nota_legale, stili["caption"]),
+        ]
+
+    # ----- Variante senza piano: comportamento storico + giacenza media -----
     rows = [["#", "Data scadenza", "Importo", "Giorni mora", "Interesse"]]
     for br in rate_bk:
         rows.append([
             str(br["i"]),
             _fmt_data(br["data_scadenza"]),
-            _fmt_eur(br["importo_rata"]),
+            _fmt_eur(br["importo_rata_originale"]),
             str(br["giorni_mora"]),
             _fmt_eur(br["interesse_maturato"]),
         ])
@@ -274,11 +336,8 @@ def _sezione_scomposizione_rate(stili, d):
     somma_int = sum(br["interesse_maturato"] for br in rate_bk)
     capitale_totale = inp["importo_rata"] * len(rate_bk)
     rows.append([
-        "TOT",
-        "—",
-        _fmt_eur(capitale_totale),
-        str(somma_gg),
-        _fmt_eur(somma_int),
+        "TOT", "—", _fmt_eur(capitale_totale),
+        str(somma_gg), _fmt_eur(somma_int),
     ])
     tbl = Table(rows, colWidths=[12 * mm, 30 * mm, 35 * mm, 28 * mm, 35 * mm])
     style = _stile_tabella_base()
@@ -297,13 +356,9 @@ def _sezione_scomposizione_rate(stili, d):
         f"<b>{_fmt_eur(giacenza_media)}</b> (coincide con la somma rata "
         f"per rata)."
     )
-
     return [
         PageBreak(),
-        Paragraph(
-            "5b. Scomposizione rata per rata (Fase 1)",
-            stili["h2"]
-        ),
+        Paragraph("5b. Scomposizione rata per rata (Fase 1)", stili["h2"]),
         Paragraph(
             "Il software <b>itera rata per rata</b>: per ciascuna applica il "
             "tasso di mora sull'importo della <i>singola</i> rata, per i "
@@ -316,6 +371,89 @@ def _sezione_scomposizione_rate(stili, d):
         tbl,
         Spacer(1, 4),
         Paragraph(nota_giacenza, stili["caption"]),
+    ]
+
+
+def _sezione_piano_ammortamento(stili, d):
+    """Sezione opzionale: piano di ammortamento ricostruito.
+
+    Mostrata solo se il chiamante passa report_data['piano_ammortamento']
+    (lista di dict dalla funzione genera_piano_ammortamento). Per piani
+    lunghi (>50 rate), mostra la prima e l'ultima rata + tutte le rate
+    insolute, per non rendere il PDF eccessivamente voluminoso.
+    """
+    piano = d.get("piano_ammortamento")
+    if not piano:
+        return []
+
+    insolute_ids = {r["num_rata_piano"] for r in (
+        d["calcolo"]["risultato"]["dettaglio"]
+         .get("FASE_1_rate", {}).get("rate_breakdown", [])
+        if d["calcolo"]["risultato"]["dettaglio"]
+         .get("FASE_1_rate", {}).get("usa_piano_ammortamento", False)
+        else []
+    )}
+
+    # Filtro intelligente per piani molto lunghi
+    if len(piano) > 50 and insolute_ids:
+        ids_da_mostrare = set([1, len(piano)]) | insolute_ids
+        # estensione 2 rate prima/dopo le insolute per contesto
+        for ri in list(insolute_ids):
+            ids_da_mostrare.update({ri - 1, ri - 2, ri + 1, ri + 2})
+        ids_da_mostrare = {i for i in ids_da_mostrare if 1 <= i <= len(piano)}
+        rate_da_mostrare = [
+            r for r in piano if r["num_rata"] in ids_da_mostrare
+        ]
+        nota_filtro = (
+            f"Mostriamo le rate insolute (evidenziate) + 2 rate di contesto "
+            f"prima/dopo + prima e ultima del piano. Piano completo: "
+            f"{len(piano)} rate."
+        )
+    else:
+        rate_da_mostrare = piano
+        nota_filtro = f"Piano completo: {len(piano)} rate."
+
+    rows = [["#", "Scadenza", "Q. Int.", "Q. Cap.", "Rata", "Cap. residuo", "Ins."]]
+    for r in rate_da_mostrare:
+        is_ins = r["num_rata"] in insolute_ids
+        rows.append([
+            str(r["num_rata"]),
+            _fmt_data(r["data_scadenza"]),
+            _fmt_eur(r["quota_interessi"]),
+            _fmt_eur(r["quota_capitale"]),
+            _fmt_eur(r["importo_rata"]),
+            _fmt_eur(r["capitale_residuo"]),
+            "X" if is_ins else "",
+        ])
+    tbl = Table(rows, colWidths=[12 * mm, 22 * mm, 25 * mm,
+                                 25 * mm, 25 * mm, 30 * mm, 10 * mm])
+    style = _stile_tabella_base()
+    style.add("FONTSIZE", (0, 0), (-1, -1), 7)
+    # Evidenzia le rate insolute con sfondo rosato
+    for idx, r in enumerate(rate_da_mostrare, start=1):
+        if r["num_rata"] in insolute_ids:
+            style.add("BACKGROUND", (0, idx), (-1, idx),
+                      colors.HexColor("#ffe6e6"))
+    tbl.setStyle(style)
+
+    return [
+        PageBreak(),
+        Paragraph(
+            "9. Piano di Ammortamento Ricostruito",
+            stili["h2"]
+        ),
+        Paragraph(
+            "Piano di ammortamento alla francese ricostruito dai parametri "
+            "del mutuo originario. Le righe con <b>X</b> (sfondo rosato) "
+            "sono le rate insolute intercettate nel periodo "
+            "<i>prima rata insoluta → decadenza</i>, su cui è stata "
+            "calcolata la mora di Fase 1 (sola Quota Capitale).",
+            stili["body"]
+        ),
+        Spacer(1, 4),
+        tbl,
+        Spacer(1, 4),
+        Paragraph(nota_filtro, stili["caption"]),
     ]
 
 
@@ -559,6 +697,7 @@ def genera_report_pdf(report_data: dict, password: str = "") -> bytes:
     corpo += _sezione_fase3(stili, report_data)
     corpo += _sezione_scomposizione_rate(stili, report_data)
     corpo += _sezione_gbv(stili, report_data)
+    corpo += _sezione_piano_ammortamento(stili, report_data)
     return _build_pdf(
         titolo_doc="Report MORA – Interessi di mora ex art. 2855 c.c.",
         titolo_header="⚖️ Report Interessi di Mora – Art. 2855 c.c.",

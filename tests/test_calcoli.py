@@ -9,6 +9,8 @@ from calcoli import (
     TASSO_LEGALE_DEFAULT,
     calcola_mora_unificato,
     calcola_triennio,
+    estrai_rate_insolute_da_piano,
+    genera_piano_ammortamento,
     genera_rate_scadute,
     giorni_tra,
     interesse_legale_pro_rata,
@@ -376,6 +378,161 @@ class TestCalcolaMoraUnificato:
         r = self._chiama_default()
         assert r["ipotecario"] > 0
         assert r["chirografario"] > 0
+
+
+# ==========================================================
+# Piano di ammortamento (alla francese)
+# ==========================================================
+
+class TestGeneraPianoAmmortamento:
+    def test_numero_rate_mensile(self):
+        # 240 mesi mensili → 240 rate
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=240,
+            frequenza="Mensile", data_erogazione=date(2018, 6, 15),
+        )
+        assert len(piano) == 240
+
+    def test_numero_rate_trimestrale(self):
+        # 240 mesi trimestrali → 80 rate
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=240,
+            frequenza="Trimestrale", data_erogazione=date(2018, 6, 15),
+        )
+        assert len(piano) == 80
+
+    def test_somma_quote_capitale_uguale_a_capitale_erogato(self):
+        # Invariante fondamentale dell'ammortamento alla francese
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=240,
+            frequenza="Mensile", data_erogazione=date(2018, 6, 15),
+        )
+        somma_qc = sum(r["quota_capitale"] for r in piano)
+        assert somma_qc == pytest.approx(100000.0, abs=0.01)
+
+    def test_capitale_residuo_ultima_rata_zero(self):
+        piano = genera_piano_ammortamento(
+            capitale=50000, tan=0.05, durata_mesi=120,
+            frequenza="Mensile", data_erogazione=date(2020, 1, 1),
+        )
+        assert piano[-1]["capitale_residuo"] == pytest.approx(0.0, abs=0.01)
+
+    def test_quota_capitale_cresce_quota_interessi_decresce(self):
+        # Caratteristica dell'ammortamento alla francese
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=240,
+            frequenza="Mensile", data_erogazione=date(2020, 1, 1),
+        )
+        # Confronto prima e ultima rata pre-aggiustamento
+        assert piano[0]["quota_capitale"] < piano[-2]["quota_capitale"]
+        assert piano[0]["quota_interessi"] > piano[-2]["quota_interessi"]
+
+    def test_prima_rata_scade_dopo_un_periodo(self):
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=12,
+            frequenza="Mensile", data_erogazione=date(2020, 1, 1),
+        )
+        # Mensile: prima rata = 1/2/2020
+        assert piano[0]["data_scadenza"] == date(2020, 2, 1)
+        # Ultima rata = 1/1/2021
+        assert piano[-1]["data_scadenza"] == date(2021, 1, 1)
+
+    def test_tan_zero_rata_costante_uguale_capitale_su_n(self):
+        piano = genera_piano_ammortamento(
+            capitale=12000, tan=0.0, durata_mesi=12,
+            frequenza="Mensile", data_erogazione=date(2020, 1, 1),
+        )
+        for r in piano:
+            assert r["quota_interessi"] == pytest.approx(0.0)
+            assert r["quota_capitale"] == pytest.approx(1000.0, abs=0.01)
+
+
+class TestEstraiRateInsoluteDaPiano:
+    def test_filtro_per_periodo(self):
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=24,
+            frequenza="Mensile", data_erogazione=date(2020, 1, 1),
+        )
+        # rate da 1/3/2021 a 1/1/2022 (mensili) = 11 rate
+        insolute = estrai_rate_insolute_da_piano(
+            piano, date(2021, 3, 1), date(2022, 1, 20)
+        )
+        assert len(insolute) == 11
+        assert insolute[0]["data_scadenza"] == date(2021, 3, 1)
+        assert insolute[-1]["data_scadenza"] == date(2022, 1, 1)
+
+    def test_periodo_vuoto(self):
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=24,
+            frequenza="Mensile", data_erogazione=date(2020, 1, 1),
+        )
+        # finestra che non interseca alcuna rata
+        insolute = estrai_rate_insolute_da_piano(
+            piano, date(2025, 1, 1), date(2025, 12, 1)
+        )
+        assert insolute == []
+
+
+# ==========================================================
+# Integrazione: calcola_mora_unificato con piano
+# ==========================================================
+
+class TestMoraConPianoAmmortamento:
+    """
+    Verifica che, passando il piano, la mora di Fase 1 venga calcolata
+    SOLO sulla quota capitale (anti-anatocismo art. 1283 c.c.) e che
+    sia strettamente inferiore al calcolo sull'intera rata.
+    """
+    def test_mora_su_quota_capitale_minore_che_su_rata_intera(self):
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=240,
+            frequenza="Mensile", data_erogazione=date(2018, 6, 15),
+        )
+        common = dict(
+            importo_rata=800.0,
+            data_prima_rata=date(2021, 3, 1),
+            frequenza="Mensile",
+            capitale_residuo=0.0,  # isola la Fase 1
+            tasso_mora=0.08,
+            data_decadenza_effettiva=date(2022, 1, 20),
+            data_pignoramento=date(2023, 9, 10),
+            data_fine=date(2022, 1, 20),
+        )
+        r_senza = calcola_mora_unificato(**common, piano_ammortamento=None)
+        r_con = calcola_mora_unificato(**common, piano_ammortamento=piano)
+        totale_senza = r_senza["ipotecario"] + r_senza["chirografario"]
+        totale_con = r_con["ipotecario"] + r_con["chirografario"]
+        # La mora calcolata sulla sola quota capitale deve essere minore
+        # (la quota capitale di un mutuo alla francese all'inizio è < importo rata)
+        assert totale_con < totale_senza
+        assert totale_con > 0
+
+    def test_quote_interessi_tracciate(self):
+        piano = genera_piano_ammortamento(
+            capitale=100000, tan=0.04, durata_mesi=240,
+            frequenza="Mensile", data_erogazione=date(2018, 6, 15),
+        )
+        r = calcola_mora_unificato(
+            importo_rata=800.0,
+            data_prima_rata=date(2021, 3, 1),
+            frequenza="Mensile",
+            capitale_residuo=0.0,
+            tasso_mora=0.08,
+            data_decadenza_effettiva=date(2022, 1, 20),
+            data_pignoramento=date(2023, 9, 10),
+            data_fine=date(2022, 1, 20),
+            piano_ammortamento=piano,
+        )
+        fase1 = r["dettaglio"]["FASE_1_rate"]
+        assert fase1["usa_piano_ammortamento"] is True
+        # Le quote interessi tracciate devono essere > 0 (mutuo @ 4% TAN)
+        assert fase1["quote_interessi_messe_da_parte"] > 0
+        # Il breakdown deve contenere i campi nuovi
+        primo = fase1["rate_breakdown"][0]
+        assert "quota_capitale" in primo
+        assert "quota_interessi" in primo
+        assert "num_rata_piano" in primo
+        assert primo["num_rata_piano"] is not None
 
 
 # ==========================================================

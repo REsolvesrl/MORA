@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import date
 import plotly.graph_objects as go
 
+import pandas as pd
 from calcoli import (
     FREQUENZA_MESI,
     SPESE_IMMOBILIARE,
@@ -9,6 +10,8 @@ from calcoli import (
     COSTI_ACQUISIZIONE,
     calcola_triennio,
     calcola_mora_unificato,
+    estrai_rate_insolute_da_piano,
+    genera_piano_ammortamento,
 )
 from pdf_export import (
     genera_report_pdf,
@@ -219,6 +222,137 @@ with tab1:
             help="Spese di precetto, notifica, procedura esecutiva richieste in atto."
         )
 
+    # ==========================================================
+    # 📐 RICOSTRUZIONE PIANO DI AMMORTAMENTO (anti-anatocismo)
+    # ==========================================================
+    st.divider()
+    st.markdown("### 📐 Ricostruzione Piano di Ammortamento (anti-anatocismo)")
+    usa_piano = st.checkbox(
+        "🛡️ Calcola la mora di Fase 1 **solo sulla Quota Capitale** "
+        "(no anatocismo ex art. 1283 c.c.)",
+        value=False,
+        help=(
+            "Se attivato, il software ricostruisce l'intero piano di "
+            "ammortamento alla francese del mutuo originario, estrae per "
+            "ciascuna rata insoluta la Quota Capitale e calcola la mora "
+            "esclusivamente su quella. La Quota Interessi della singola "
+            "rata viene messa da parte (sommata al debito finale senza "
+            "produrre ulteriore mora)."
+        ),
+    )
+
+    piano_ammortamento = None
+    if usa_piano:
+        m1, m2, m3 = st.columns(3)
+        capitale_originario = m1.number_input(
+            "💶 Capitale Originario Erogato (€)",
+            min_value=0.0, value=200000.0, step=1000.0,
+            help="Importo del mutuo come da contratto / atto notarile."
+        )
+        data_erogazione = m2.date_input(
+            "📅 Data di Erogazione (inizio mutuo)",
+            value=data_stipula,
+            format="DD/MM/YYYY",
+            help="Di norma coincide con la Data di stipula. Modificare se "
+                 "l'erogazione è avvenuta in data diversa."
+        )
+        durata_anni = m3.number_input(
+            "⏳ Durata del mutuo (anni)",
+            min_value=1, max_value=50, value=20, step=1,
+        )
+        m4, m5 = st.columns(2)
+        tan = m4.number_input(
+            "📊 TAN del mutuo (%)",
+            min_value=0.0, max_value=20.0, value=4.50, step=0.05,
+            help="Tasso Annuo Nominale del mutuo originario (diverso dal "
+                 "tasso di mora). Sarà usato per calcolare la rata costante "
+                 "e la ripartizione capitale/interessi rata per rata.",
+        ) / 100
+        freq_piano = m5.selectbox(
+            "Frequenza rate (piano di ammortamento)",
+            options=list(FREQUENZA_MESI.keys()), index=0,
+            help="Di norma uguale alla 'Frequenza rate' del piano "
+                 "originario. Modificare se diversa."
+        )
+
+        try:
+            piano_ammortamento = genera_piano_ammortamento(
+                capitale=capitale_originario, tan=tan,
+                durata_mesi=int(durata_anni * 12),
+                frequenza=freq_piano,
+                data_erogazione=data_erogazione,
+            )
+            st.success(
+                f"✅ Piano generato: **{len(piano_ammortamento)} rate**, "
+                f"rata costante (escluso ultimo aggiustamento) di "
+                f"**{fmt_eur(piano_ammortamento[0]['importo_rata'])}**. "
+                f"Somma quote capitale = "
+                f"{fmt_eur(sum(r['quota_capitale'] for r in piano_ammortamento))} "
+                f"(= capitale erogato ✅)."
+            )
+
+            # Estrai e mostra le rate insolute
+            rate_insolute = estrai_rate_insolute_da_piano(
+                piano_ammortamento,
+                data_prima_rata, data_decadenza_effettiva,
+            )
+            if rate_insolute:
+                st.caption(
+                    f"🔎 **{len(rate_insolute)} rate insolute** intercettate "
+                    f"nel periodo {data_prima_rata.strftime('%d/%m/%Y')} → "
+                    f"{data_decadenza_effettiva.strftime('%d/%m/%Y')}: "
+                    f"dalla rata #{rate_insolute[0]['num_rata']} alla "
+                    f"#{rate_insolute[-1]['num_rata']} del piano."
+                )
+            else:
+                st.warning(
+                    "⚠️ Nessuna rata del piano cade nell'intervallo "
+                    "prima rata insoluta → decadenza. Verifica le date "
+                    "del mutuo e della prima rata insoluta."
+                )
+
+            with st.expander("📊 Visualizza Piano di Ammortamento Ricostruito"):
+                df_piano = pd.DataFrame([
+                    {
+                        "Num_Rata": r["num_rata"],
+                        "Data_Scadenza": r["data_scadenza"].strftime("%d/%m/%Y"),
+                        "Quota_Interessi": r["quota_interessi"],
+                        "Quota_Capitale": r["quota_capitale"],
+                        "Importo_Rata": r["importo_rata"],
+                        "Capitale_Residuo": r["capitale_residuo"],
+                        "Insoluta": "🔴" if any(
+                            ri["num_rata"] == r["num_rata"]
+                            for ri in rate_insolute
+                        ) else "",
+                    }
+                    for r in piano_ammortamento
+                ])
+                st.dataframe(
+                    df_piano,
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Quota_Interessi": st.column_config.NumberColumn(
+                            "Quota Interessi (€)", format="%.2f"
+                        ),
+                        "Quota_Capitale": st.column_config.NumberColumn(
+                            "Quota Capitale (€)", format="%.2f"
+                        ),
+                        "Importo_Rata": st.column_config.NumberColumn(
+                            "Importo Rata (€)", format="%.2f"
+                        ),
+                        "Capitale_Residuo": st.column_config.NumberColumn(
+                            "Capitale Residuo (€)", format="%.2f"
+                        ),
+                    },
+                )
+                st.caption(
+                    "🔴 = rata insoluta intercettata (Fase 1). La mora "
+                    "verrà calcolata solo sulla Quota Capitale."
+                )
+        except Exception as e:
+            st.error(f"⛔ Generazione piano fallita: {e}")
+            piano_ammortamento = None
+
     st.divider()
 
     if st.button("🧮 Calcola interessi di mora", type="primary"):
@@ -255,7 +389,10 @@ with tab1:
         # --- GIRO B (Calcolo Attuale): stima del debito a oggi / data_fine ---
         st.caption("⏳ **Giro B** — Debito attuale aggiornato alla data di fine "
                    "calcolo per orientamento negoziale.")
-        risultato = calcola_mora_unificato(**params_comuni, data_fine=data_fine)
+        risultato = calcola_mora_unificato(
+            **params_comuni, data_fine=data_fine,
+            piano_ammortamento=piano_ammortamento,
+        )
 
         # --- GIRO A (Check GBV): calcolo congelato alla data di attualizzazione ---
         risultato_gbv = None
@@ -275,7 +412,8 @@ with tab1:
                     "'alla pari'."
                 )
                 risultato_gbv = calcola_mora_unificato(
-                    **params_comuni, data_fine=data_attualizzazione_gbv
+                    **params_comuni, data_fine=data_attualizzazione_gbv,
+                    piano_ammortamento=piano_ammortamento,
                 )
 
         # --- Metriche totali generali ---
@@ -340,62 +478,128 @@ with tab1:
                     f"- **Interessi rate scadute → 🅰️ = {fmt_eur(fase1_interessi)}**"
                 )
 
-                st.info(
-                    "ℹ️ **Perché questo importo può sembrare 'basso'?**\n\n"
-                    "Le rate maturano interessi in modo **progressivo**: la "
-                    "rata più vecchia accumula tutti i giorni di ritardo, "
-                    "quella più recente solo pochi giorni. Il software "
-                    "**non applica il tasso sull'intero monte rate per "
-                    "tutto il periodo**: itera rata per rata e somma i "
-                    "contributi (equivalente alla formula della "
-                    "*giacenza media*)."
+                fase1_info = det.get("FASE_1_rate", {})
+                f1_usa_piano = fase1_info.get("usa_piano_ammortamento", False)
+                f1_quote_int_messe_da_parte = fase1_info.get(
+                    "quote_interessi_messe_da_parte", 0.0
                 )
 
-                # --- Tabella di scomposizione rata per rata ---
-                rate_bk = det.get("FASE_1_rate", {}).get("rate_breakdown", [])
-                if rate_bk:
-                    with st.expander(
-                        "📋 Scomposizione rata per rata "
-                        "(giorni esatti di mora + interesse maturato)"
-                    ):
-                        righe = [
-                            "| # | Data scadenza | Importo | Giorni mora | Interesse maturato |",
-                            "|---:|:---:|---:|---:|---:|",
-                        ]
-                        for br in rate_bk:
-                            righe.append(
-                                f"| {br['i']} | "
-                                f"{br['data_scadenza'].strftime('%d/%m/%Y')} | "
-                                f"{fmt_eur(br['importo_rata'])} | "
-                                f"{br['giorni_mora']} | "
-                                f"{fmt_eur(br['interesse_maturato'])} |"
-                            )
-                        somma_gg = sum(br["giorni_mora"] for br in rate_bk)
-                        somma_int = sum(br["interesse_maturato"] for br in rate_bk)
-                        righe.append(
-                            f"| **TOTALE** | — | "
-                            f"**{fmt_eur(base_rate_scadute)}** | "
-                            f"**{somma_gg}** | "
-                            f"**{fmt_eur(somma_int)}** |"
-                        )
-                        st.markdown("\n".join(righe))
+                if f1_usa_piano:
+                    st.success(
+                        "🛡️ **Calcolo anti-anatocismo attivo (art. 1283 c.c.).** "
+                        "La mora di Fase 1 è calcolata **esclusivamente sulla "
+                        "Quota Capitale** estratta dal piano di ammortamento "
+                        "ricostruito. La Quota Interessi delle rate insolute "
+                        f"(totale {fmt_eur(f1_quote_int_messe_da_parte)}) "
+                        "è messa da parte: viene sommata al debito finale "
+                        "senza produrre ulteriore mora."
+                    )
+                else:
+                    st.info(
+                        "ℹ️ **Perché questo importo può sembrare 'basso'?**\n\n"
+                        "Le rate maturano interessi in modo **progressivo**: "
+                        "la rata più vecchia accumula tutti i giorni di "
+                        "ritardo, quella più recente solo pochi giorni. Il "
+                        "software **non applica il tasso sull'intero monte "
+                        "rate per tutto il periodo**: itera rata per rata e "
+                        "somma i contributi (equivalente alla formula della "
+                        "*giacenza media*)."
+                    )
 
-                        # Verifica didattica: equivalenza con la giacenza media
-                        gg_medi = somma_gg / len(rate_bk)
-                        giacenza_media = (
-                            base_rate_scadute * tasso_mora * gg_medi / 365
-                        )
-                        st.caption(
-                            f"✅ **Verifica equivalente — giacenza media:** "
-                            f"giorni medi di ritardo = "
-                            f"**{gg_medi:.1f}** (~{gg_medi/30:.1f} mesi). "
-                            f"Applicando la formula `Capitale totale × Tasso "
-                            f"× Giorni medi / 365`: "
-                            f"{fmt_eur(base_rate_scadute)} × "
-                            f"{fmt_pct(tasso_mora)} × {gg_medi:.1f} / 365 = "
-                            f"**{fmt_eur(giacenza_media)}** "
-                            f"(coincide con la somma rata-per-rata)."
-                        )
+                # --- Tabella di scomposizione rata per rata ---
+                rate_bk = fase1_info.get("rate_breakdown", [])
+                if rate_bk:
+                    titolo_exp = (
+                        "📋 Scomposizione rata per rata "
+                        "(quota capitale + giorni esatti di mora)"
+                        if f1_usa_piano
+                        else "📋 Scomposizione rata per rata "
+                             "(giorni esatti di mora + interesse maturato)"
+                    )
+                    with st.expander(titolo_exp):
+                        if f1_usa_piano:
+                            righe = [
+                                "| # piano | Data scadenza | Rata totale | "
+                                "Quota interessi *(messa da parte)* | "
+                                "Quota capitale *(base mora)* | "
+                                "Giorni mora | Interesse maturato |",
+                                "|---:|:---:|---:|---:|---:|---:|---:|",
+                            ]
+                            for br in rate_bk:
+                                righe.append(
+                                    f"| {br['num_rata_piano']} | "
+                                    f"{br['data_scadenza'].strftime('%d/%m/%Y')} | "
+                                    f"{fmt_eur(br['importo_rata_originale'])} | "
+                                    f"{fmt_eur(br['quota_interessi'])} | "
+                                    f"{fmt_eur(br['quota_capitale'])} | "
+                                    f"{br['giorni_mora']} | "
+                                    f"{fmt_eur(br['interesse_maturato'])} |"
+                                )
+                            somma_qc = sum(br["quota_capitale"] for br in rate_bk)
+                            somma_qi = sum(br["quota_interessi"] for br in rate_bk)
+                            somma_rate = sum(
+                                br["importo_rata_originale"] for br in rate_bk
+                            )
+                            somma_gg = sum(br["giorni_mora"] for br in rate_bk)
+                            somma_int = sum(
+                                br["interesse_maturato"] for br in rate_bk
+                            )
+                            righe.append(
+                                f"| **TOT** | — | "
+                                f"**{fmt_eur(somma_rate)}** | "
+                                f"**{fmt_eur(somma_qi)}** | "
+                                f"**{fmt_eur(somma_qc)}** | "
+                                f"**{somma_gg}** | "
+                                f"**{fmt_eur(somma_int)}** |"
+                            )
+                            st.markdown("\n".join(righe))
+                            st.caption(
+                                "📌 **Nota:** al fine di evitare l'anatocismo, "
+                                "gli interessi di mora sulle rate scadute "
+                                "sono stati calcolati **esclusivamente sulla "
+                                "Quota Capitale** delle stesse, ricavata "
+                                "dal piano di ammortamento."
+                            )
+                        else:
+                            righe = [
+                                "| # | Data scadenza | Importo | "
+                                "Giorni mora | Interesse maturato |",
+                                "|---:|:---:|---:|---:|---:|",
+                            ]
+                            for br in rate_bk:
+                                righe.append(
+                                    f"| {br['i']} | "
+                                    f"{br['data_scadenza'].strftime('%d/%m/%Y')} | "
+                                    f"{fmt_eur(br['importo_rata_originale'])} | "
+                                    f"{br['giorni_mora']} | "
+                                    f"{fmt_eur(br['interesse_maturato'])} |"
+                                )
+                            somma_gg = sum(br["giorni_mora"] for br in rate_bk)
+                            somma_int = sum(
+                                br["interesse_maturato"] for br in rate_bk
+                            )
+                            righe.append(
+                                f"| **TOTALE** | — | "
+                                f"**{fmt_eur(base_rate_scadute)}** | "
+                                f"**{somma_gg}** | "
+                                f"**{fmt_eur(somma_int)}** |"
+                            )
+                            st.markdown("\n".join(righe))
+                            gg_medi = somma_gg / len(rate_bk)
+                            giacenza_media = (
+                                base_rate_scadute * tasso_mora * gg_medi / 365
+                            )
+                            st.caption(
+                                f"✅ **Verifica equivalente — giacenza media:** "
+                                f"giorni medi di ritardo = "
+                                f"**{gg_medi:.1f}** (~{gg_medi/30:.1f} mesi). "
+                                f"Applicando la formula `Capitale totale × "
+                                f"Tasso × Giorni medi / 365`: "
+                                f"{fmt_eur(base_rate_scadute)} × "
+                                f"{fmt_pct(tasso_mora)} × {gg_medi:.1f} / 365 "
+                                f"= **{fmt_eur(giacenza_media)}** "
+                                f"(coincide con la somma rata-per-rata)."
+                            )
 
             with f2_col:
                 st.markdown("#### 🅱️ Interessi sul Capitale Residuo")
@@ -778,6 +982,7 @@ with tab1:
                     if gbv_dichiarato > 0 and risultato_gbv is not None
                     else None
                 ),
+                "piano_ammortamento": piano_ammortamento,
             }
             pdf_bytes = genera_report_pdf(report_data, password=pdf_password)
             st.session_state["pdf_report_bytes"] = pdf_bytes

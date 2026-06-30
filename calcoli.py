@@ -121,6 +121,96 @@ def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
         cursore = cursore + relativedelta(months=mesi)
     return rate
 
+
+# Numero di periodi annui per ciascuna frequenza (per calcolo TAN periodale)
+PERIODI_ANNUI = {
+    "Mensile": 12,
+    "Trimestrale": 4,
+    "Semestrale": 2,
+}
+
+
+def genera_piano_ammortamento(capitale, tan, durata_mesi, frequenza,
+                               data_erogazione):
+    """
+    Genera il piano di ammortamento alla francese (rata costante).
+
+    Parametri:
+        capitale         : capitale originario erogato (€)
+        tan              : Tasso Annuo Nominale (decimale, es. 0.045 per 4,5%)
+        durata_mesi      : durata totale del mutuo in mesi
+        frequenza        : "Mensile" | "Trimestrale" | "Semestrale"
+        data_erogazione  : data di inizio del mutuo (la prima rata scadrà
+                           dopo un periodo, secondo la frequenza)
+
+    Ritorna una lista di dict, uno per rata, con le chiavi:
+        num_rata, data_scadenza, quota_interessi, quota_capitale,
+        importo_rata, capitale_residuo.
+
+    Regola matematica (alla francese, interessi posticipati):
+        i = TAN / periodi_annui
+        R = C * i / (1 - (1+i)^-n)
+        Quota_interessi[k] = capitale_residuo[k-1] * i
+        Quota_capitale[k]  = R - Quota_interessi[k]
+        Capitale_residuo[k] = capitale_residuo[k-1] - Quota_capitale[k]
+
+    L'ultimo capitale residuo viene azzerato (eventuali residui da
+    arrotondamenti vengono assorbiti nell'ultima quota capitale).
+    """
+    if frequenza not in PERIODI_ANNUI:
+        raise ValueError(f"Frequenza non gestita: {frequenza}")
+    periodi_annui = PERIODI_ANNUI[frequenza]
+    mesi_per_periodo = FREQUENZA_MESI[frequenza]
+    n = int(durata_mesi // mesi_per_periodo)
+    if n <= 0:
+        raise ValueError("Durata del mutuo troppo breve per la frequenza scelta.")
+
+    i = tan / periodi_annui
+    if i == 0:
+        rata_costante = capitale / n
+    else:
+        rata_costante = capitale * i / (1 - (1 + i) ** (-n))
+
+    piano = []
+    residuo = capitale
+    for k in range(1, n + 1):
+        quota_interessi = residuo * i
+        quota_capitale = rata_costante - quota_interessi
+        if k == n:
+            # Forza l'azzeramento dell'ultimo capitale residuo:
+            # quota_capitale prende quello che resta, importo_rata si adegua.
+            quota_capitale = residuo
+            importo_rata = quota_capitale + quota_interessi
+        else:
+            importo_rata = rata_costante
+        residuo_dopo = residuo - quota_capitale
+        data_scadenza = data_erogazione + relativedelta(months=k * mesi_per_periodo)
+        piano.append({
+            "num_rata": k,
+            "data_scadenza": data_scadenza,
+            "quota_interessi": quota_interessi,
+            "quota_capitale": quota_capitale,
+            "importo_rata": importo_rata,
+            "capitale_residuo": max(residuo_dopo, 0.0),
+        })
+        residuo = residuo_dopo
+    return piano
+
+
+def estrai_rate_insolute_da_piano(piano, data_prima_rata_insoluta, data_limite):
+    """
+    Filtra il piano restituendo le rate che ricadono nel periodo
+    [data_prima_rata_insoluta, data_limite). Sono le rate insolute della
+    Fase 1 (pre-decadenza/precetto).
+
+    Il matching è strict: la prima rata insoluta corrisponde alla rata
+    del piano con data_scadenza >= data_prima_rata_insoluta.
+    """
+    return [
+        r for r in piano
+        if data_prima_rata_insoluta <= r["data_scadenza"] < data_limite
+    ]
+
 # ==========================================================
 # 3. CALCOLO DEL TRIENNIO GARANTITO (Art. 2855 c.c.)
 # ==========================================================
@@ -226,7 +316,8 @@ def _accumula(totale, parziale, chiave_dettaglio):
 def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            capitale_residuo, tasso_mora,
                            data_decadenza_effettiva,
-                           data_pignoramento, data_fine):
+                           data_pignoramento, data_fine,
+                           piano_ammortamento=None):
     """
     MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
     L'unica differenza tra i due casi è 'data_decadenza_effettiva':
@@ -241,6 +332,14 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
     Entrambe le parti passano per il filtro Art. 2855 c.c., che le ripartisce
     nelle 3 fasi (pre-triennio, triennio, post-triennio) rispetto al
     triennio garantito (3 anni a ritroso dal pignoramento).
+
+    Parametro `piano_ammortamento` (opzionale):
+        Se fornito (lista di dict da `genera_piano_ammortamento`), la Fase 1
+        usa la **quota_capitale** di ciascuna rata insoluta come capitale di
+        riferimento per il calcolo della mora, NON l'importo_rata intero.
+        Questo evita l'anatocismo ex art. 1283 c.c.: gli interessi di mora
+        si applicano solo sulla quota capitale; la quota interessi della
+        singola rata viene tracciata a parte (non produce ulteriore mora).
     """
     totale = {
         "ipotecario": 0.0,
@@ -256,9 +355,39 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
     }
 
     # ---------- FASE 1: rate scadute fino alla decadenza ----------
-    rate_scadute = genera_rate_scadute(
-        importo_rata, data_prima_rata, frequenza, data_decadenza_effettiva
-    )
+    # Se è passato un piano di ammortamento, prendo le rate insolute da lì
+    # (con quote interessi/capitale separate). Altrimenti genero rate
+    # uniformi con importo_rata intero (comportamento storico).
+    usa_piano = piano_ammortamento is not None
+    if usa_piano:
+        rate_insolute_piano = estrai_rate_insolute_da_piano(
+            piano_ammortamento, data_prima_rata, data_decadenza_effettiva
+        )
+        rate_scadute = [
+            {
+                "importo": r["quota_capitale"],   # mora SOLO sulla quota capitale
+                "data_scadenza": r["data_scadenza"],
+                "quota_capitale": r["quota_capitale"],
+                "quota_interessi": r["quota_interessi"],
+                "importo_rata_originale": r["importo_rata"],
+                "num_rata_piano": r["num_rata"],
+            }
+            for r in rate_insolute_piano
+        ]
+    else:
+        rate_scadute = [
+            {
+                "importo": r["importo"],
+                "data_scadenza": r["data_scadenza"],
+                "quota_capitale": r["importo"],          # mora sull'intera rata
+                "quota_interessi": 0.0,
+                "importo_rata_originale": r["importo"],
+                "num_rata_piano": None,
+            }
+            for r in genera_rate_scadute(
+                importo_rata, data_prima_rata, frequenza, data_decadenza_effettiva
+            )
+        ]
 
     dettaglio_fase1 = {
         "numero_rate_generate": len(rate_scadute),
@@ -267,11 +396,14 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         # Ogni elemento contiene la singola rata con i giorni esatti di mora
         # e l'interesse maturato (somma ipotecario + chirografario di Fase 1).
         "rate_breakdown": [],
+        # Flag e quote interessi messe da parte (no anatocismo)
+        "usa_piano_ammortamento": usa_piano,
+        "quote_interessi_messe_da_parte": 0.0,
     }
 
     for i, rata in enumerate(rate_scadute):
         rip = ripartisci_credito(
-            capitale=rata["importo"],
+            capitale=rata["importo"],   # = quota_capitale se usa_piano, altrimenti rata intera
             tasso_mora=tasso_mora,
             data_inizio_mora=rata["data_scadenza"],
             data_pignoramento=data_pignoramento,
@@ -297,10 +429,15 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         dettaglio_fase1["rate_breakdown"].append({
             "i": i + 1,
             "data_scadenza": rata["data_scadenza"],
-            "importo_rata": rata["importo"],
+            "importo_rata_originale": rata["importo_rata_originale"],
+            "quota_capitale": rata["quota_capitale"],
+            "quota_interessi": rata["quota_interessi"],
+            "capitale_su_cui_si_calcola_mora": rata["importo"],
             "giorni_mora": giorni_mora_rata,
             "interesse_maturato": interesse_rata,
+            "num_rata_piano": rata["num_rata_piano"],
         })
+        dettaglio_fase1["quote_interessi_messe_da_parte"] += rata["quota_interessi"]
 
     totale["dettaglio"]["FASE_1_rate"] = dettaglio_fase1
 
