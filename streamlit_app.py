@@ -10,6 +10,7 @@ from calcoli import (
     calcola_triennio,
     calcola_mora_unificato,
 )
+from pdf_export import genera_report_pdf
 
 # ==========================================================
 # FORMATTAZIONE NUMERICA IN STILE ITALIANO
@@ -92,6 +93,20 @@ with st.sidebar:
         index=0,
     )
     is_caso_A = caso.startswith("CASO A")
+
+    st.divider()
+    st.subheader("📄 Esportazione PDF")
+    pdf_password = st.text_input(
+        "Password apertura PDF (opzionale)",
+        value="",
+        type="password",
+        help=(
+            "Se inserisci una password, il PDF richiederà questa password per "
+            "essere aperto. Se lasci vuoto, il PDF si aprirà liberamente. "
+            "In entrambi i casi, copia del testo e modifica del documento "
+            "sono sempre disabilitate."
+        ),
+    )
 
 # ==========================================================
 # TAB PRINCIPALI
@@ -665,6 +680,88 @@ with tab1:
 
         with st.expander("🔍 Dettaglio calcolo (dati grezzi)"):
             st.json(risultato['dettaglio'])
+
+        # ==========================================================
+        # 📄 GENERAZIONE PDF (in memoria) → salvataggio in session_state
+        # ==========================================================
+        try:
+            segmenti_legale = (
+                risultato["dettaglio"]
+                .get("FASE_2_capitale_residuo", {})
+                .get("post_segmenti_legale", [])
+            )
+            report_data = {
+                "input": {
+                    "tasso_mora": tasso_mora,
+                    "data_stipula": data_stipula,
+                    "data_pignoramento": data_pignoramento,
+                    "data_fine": data_fine,
+                    "data_prima_rata": data_prima_rata,
+                    "frequenza": frequenza,
+                    "importo_rata": importo_rata,
+                    "capitale_residuo": capitale_residuo,
+                    "data_decadenza_effettiva": data_decadenza_effettiva,
+                    "is_caso_A": is_caso_A,
+                    "spese_legali": spese_legali,
+                },
+                "calcolo": {
+                    "risultato": risultato,
+                    "totale_gen": totale_gen,
+                    "fase1_interessi": fase1_interessi,
+                    "fase2_interessi": fase2_interessi,
+                    "n_rate": n_rate,
+                },
+                "triennio": {
+                    "inizio_triennio": inizio_triennio,
+                    "fine_triennio": fine_triennio,
+                    "gg_triennio": gg_triennio,
+                    "gg_post": gg_post,
+                    "segmenti_legale": segmenti_legale,
+                },
+                "gbv": (
+                    {
+                        "gbv_dichiarato": gbv_dichiarato,
+                        "data_attualizzazione_gbv": data_attualizzazione_gbv,
+                        "risultato_gbv": risultato_gbv,
+                    }
+                    if gbv_dichiarato > 0 and risultato_gbv is not None
+                    else None
+                ),
+            }
+            pdf_bytes = genera_report_pdf(report_data, password=pdf_password)
+            st.session_state["pdf_report_bytes"] = pdf_bytes
+            st.session_state["pdf_report_protetto_da_pwd"] = bool(pdf_password)
+        except Exception as e:
+            st.warning(
+                f"⚠️ Generazione PDF non riuscita: {e}. "
+                "I calcoli a schermo restano validi."
+            )
+            st.session_state.pop("pdf_report_bytes", None)
+
+    # --- Download PDF (vive fuori dal blocco del button per persistere ai rerun) ---
+    if "pdf_report_bytes" in st.session_state:
+        st.divider()
+        nome_file = (
+            f"Report_MORA_{date.today().strftime('%Y-%m-%d')}.pdf"
+        )
+        protetto = st.session_state.get("pdf_report_protetto_da_pwd", False)
+        if protetto:
+            st.caption(
+                "🔒 PDF cifrato con la password inserita in sidebar. "
+                "Copia del testo e modifica disabilitate."
+            )
+        else:
+            st.caption(
+                "🔒 PDF senza password di apertura, ma con copia del testo "
+                "e modifica disabilitate."
+            )
+        st.download_button(
+            label="📄 Esporta Report in PDF",
+            data=st.session_state["pdf_report_bytes"],
+            file_name=nome_file,
+            mime="application/pdf",
+            type="primary",
+        )
 
 # ----------------------------------------------------------
 # TAB 2 — PREVISIONE SPESE ESECUTIVE (consulenza strategica)
