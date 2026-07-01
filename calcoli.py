@@ -245,22 +245,48 @@ def estrai_rate_insolute_da_piano(piano, data_prima_rata_insoluta, data_limite):
 # 3. CALCOLO DEL TRIENNIO GARANTITO (Art. 2855 c.c.)
 # ==========================================================
 
-def calcola_triennio(data_pignoramento):
+METODO_TRIENNIO_ESATTO = "esatto"
+METODO_TRIENNIO_SOLARE = "solare"
+
+
+def calcola_triennio(data_pignoramento, metodo=METODO_TRIENNIO_ESATTO,
+                     data_aggiudicazione=None):
     """
-    Triennio garantito ex art. 2855 c.c.: i **3 anni esatti che precedono
-    la data del pignoramento**.
+    Triennio garantito ex art. 2855 c.c. Sono disponibili due metodi.
 
-    Esempi:
-      - pignoramento 16/12/2021 → triennio 16/12/2018 → 16/12/2021
-      - pignoramento 10/09/2023 → triennio 10/09/2020 → 10/09/2023
+    metodo="esatto" (default):
+        I **3 anni esatti che precedono la data del pignoramento**.
+        - pignoramento 16/12/2021 → 16/12/2018 → 16/12/2021
+        - inizio = pignoramento − 3 anni, fine = pignoramento.
+        Durata 1095/1096 giorni.
 
-    Restituisce `(inizio_triennio, fine_triennio)` dove
-    `fine_triennio` coincide con la data del pignoramento e
-    `inizio_triennio = data_pignoramento - 3 anni`.
+    metodo="solare":
+        L'**annata (anno solare) in corso al pignoramento più le 2 annate
+        precedenti**, come nella prassi dei conteggi professionali
+        (doValue, Triple A, ecc.).
+        - inizio = 01/01 dell'anno (anno_pignoramento − 2).
+        - fine = fine dell'annata in corso (01/01 dell'anno successivo al
+          pignoramento), troncata alla data di aggiudicazione se questa
+          è anteriore.
+        Esempi:
+          - pignoramento 13/02/2025, aggiudic. 25/02/2025 →
+            triennio 01/01/2023 → 25/02/2025 (annate 2023-2024-2025).
+          - pignoramento 31/12/2021, aggiudic. 29/02/2024 →
+            triennio 01/01/2019 → 01/01/2022 (annate 2019-2020-2021),
+            poi post-triennio al tasso legale fino all'aggiudicazione.
 
-    Durata in giorni: 1095 (anno comune) o 1096 (se il periodo
-    attraversa un 29 febbraio).
+    Restituisce `(inizio_triennio, fine_triennio)`.
     """
+    if metodo == METODO_TRIENNIO_SOLARE:
+        inizio_triennio = date(data_pignoramento.year - 2, 1, 1)
+        fine_annata_in_corso = date(data_pignoramento.year + 1, 1, 1)
+        if data_aggiudicazione is not None:
+            fine_triennio = min(fine_annata_in_corso, data_aggiudicazione)
+        else:
+            fine_triennio = fine_annata_in_corso
+        return inizio_triennio, fine_triennio
+
+    # --- metodo "esatto" (default) ---
     inizio_triennio = data_pignoramento - relativedelta(years=3)
     fine_triennio = data_pignoramento
     return inizio_triennio, fine_triennio
@@ -271,22 +297,32 @@ def calcola_triennio(data_pignoramento):
 # ==========================================================
 
 def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
-                       data_pignoramento, data_fine):
+                       data_pignoramento, data_fine,
+                       metodo_triennio=METODO_TRIENNIO_ESATTO,
+                       data_aggiudicazione=None):
     """
     Filtro Art. 2855 c.c. applicato a una "voce" di interessi (rata o capitale).
 
     Divide gli interessi in tre fasi rispetto al **triennio garantito**
-    (= i 3 anni esatti che precedono il pignoramento):
+    (vedi calcola_triennio per i due metodi disponibili):
 
-    - FASE 1 — PRE-TRIENNIO: interessi anteriori a (pignoramento − 3 anni).
+    - FASE 1 — PRE-TRIENNIO: interessi anteriori all'inizio del triennio.
       Degradano interamente a chirografario, pur restando al tasso di mora.
-    - FASE 2 — TRIENNIO: interessi maturati nei 3 anni precedenti il
-      pignoramento. Ipotecari al tasso di mora pattuito.
-    - FASE 3 — POST-TRIENNIO: interessi maturati dopo il pignoramento.
+    - FASE 2 — TRIENNIO: interessi maturati nel triennio garantito.
+      Ipotecari al tasso di mora pattuito.
+    - FASE 3 — POST-TRIENNIO: interessi maturati dopo la fine del triennio.
       La quota al tasso legale resta ipotecaria; l'eccedenza (mora − legale)
       diventa chirografaria. Il tasso legale è applicato pro-rata anno per anno.
+
+    `metodo_triennio` seleziona il criterio del triennio (vedi calcola_triennio).
+    `data_aggiudicazione` è usata dal metodo "solare" per troncare la fine del
+    triennio; se None, si usa `data_fine`.
     """
-    inizio_triennio, fine_triennio = calcola_triennio(data_pignoramento)
+    if data_aggiudicazione is None:
+        data_aggiudicazione = data_fine
+    inizio_triennio, fine_triennio = calcola_triennio(
+        data_pignoramento, metodo_triennio, data_aggiudicazione
+    )
 
     risultato = {"ipotecario": 0.0, "chirografario": 0.0, "dettaglio": {}}
 
@@ -347,7 +383,8 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            capitale_residuo, tasso_mora,
                            data_decadenza_effettiva,
                            data_pignoramento, data_fine,
-                           piano_ammortamento=None):
+                           piano_ammortamento=None,
+                           metodo_triennio=METODO_TRIENNIO_ESATTO):
     """
     MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
     L'unica differenza tra i due casi è 'data_decadenza_effettiva':
@@ -437,7 +474,9 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
             tasso_mora=tasso_mora,
             data_inizio_mora=rata["data_scadenza"],
             data_pignoramento=data_pignoramento,
-            data_fine=data_decadenza_effettiva   # <-- la rata corre fino alla decadenza
+            data_fine=data_decadenza_effettiva,   # <-- la rata corre fino alla decadenza
+            metodo_triennio=metodo_triennio,
+            data_aggiudicazione=data_fine,        # aggiudicazione globale per i confini triennio
         )
         totale["ipotecario"] += rip["ipotecario"]
         totale["chirografario"] += rip["chirografario"]
@@ -477,7 +516,9 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         tasso_mora=tasso_mora,
         data_inizio_mora=data_decadenza_effettiva,  # <-- parte dalla decadenza
         data_pignoramento=data_pignoramento,
-        data_fine=data_fine
+        data_fine=data_fine,
+        metodo_triennio=metodo_triennio,
+        data_aggiudicazione=data_fine,
     )
     totale = _accumula(totale, rip_capitale, "FASE_2_capitale_residuo")
 

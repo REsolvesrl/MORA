@@ -16,6 +16,8 @@ from calcoli import (
     genera_piano_ammortamento,
     calcola_compenso_custode,
     calcola_compenso_delegato,
+    METODO_TRIENNIO_ESATTO,
+    METODO_TRIENNIO_SOLARE,
 )
 from piano_io import carica_piano_da_file
 from pdf_export import (
@@ -336,6 +338,31 @@ with st.sidebar:
         key="sb_caso",
     )
     is_caso_A = caso.startswith("CASO A")
+
+    st.divider()
+    st.subheader("Metodo del triennio (Art. 2855 c.c.)")
+    metodo_label = st.radio(
+        "Come si delimita il triennio garantito?",
+        options=[
+            "Anno solare (prassi conteggi reali)",
+            "3 anni esatti a ritroso",
+        ],
+        index=0,
+        key="sb_metodo_triennio",
+        help=(
+            "**Anno solare:** il triennio copre l'annata (anno solare) in "
+            "corso al pignoramento più le 2 precedenti, con inizio al 1° "
+            "gennaio. È il criterio usato dai conteggi professionali reali "
+            "(doValue, Triple A, ecc.).\n\n"
+            "**3 anni esatti:** il triennio copre esattamente i 3 anni "
+            "(1095/1096 giorni) che precedono la data del pignoramento."
+        ),
+    )
+    metodo_triennio = (
+        METODO_TRIENNIO_SOLARE
+        if metodo_label.startswith("Anno solare")
+        else METODO_TRIENNIO_ESATTO
+    )
 
     st.divider()
     st.subheader("📄 Esportazione PDF")
@@ -690,6 +717,7 @@ with tab1:
         risultato = calcola_mora_unificato(
             **params_comuni, data_fine=data_fine,
             piano_ammortamento=piano_ammortamento,
+            metodo_triennio=metodo_triennio,
         )
 
         # --- GIRO A (Check GBV): calcolo congelato alla data di attualizzazione ---
@@ -712,6 +740,7 @@ with tab1:
                 risultato_gbv = calcola_mora_unificato(
                     **params_comuni, data_fine=data_attualizzazione_gbv,
                     piano_ammortamento=piano_ammortamento,
+                    metodo_triennio=metodo_triennio,
                 )
 
         # --- Metriche totali generali ---
@@ -1014,10 +1043,16 @@ with tab1:
             )
 
         with fase2:
+            desc_triennio = (
+                "Interessi maturati nell'**annata in corso al pignoramento "
+                "più le 2 precedenti (anno solare)**"
+                if metodo_triennio == METODO_TRIENNIO_SOLARE
+                else "Interessi maturati nei **3 anni esatti che precedono "
+                     "il pignoramento**"
+            )
             st.success(
                 "**🟢 FASE 2 – TRIENNIO**\n\n"
-                "Interessi maturati nei **3 anni esatti che precedono "
-                "il pignoramento**: **garanzia ipotecaria piena** "
+                f"{desc_triennio}: **garanzia ipotecaria piena** "
                 "al tasso di mora pattuito.\n\n"
                 f"🏛️ Ipotecario (mora):\n\n"
                 f"### {fmt_eur(v['triennio_ipo'])}"
@@ -1048,11 +1083,13 @@ with tab1:
         det = risultato["dettaglio"]
         v = risultato["voci_2855"]
 
-        # --- Confini esatti del triennio (3 anni a ritroso dal pignoramento) ---
-        inizio_triennio, fine_triennio = calcola_triennio(data_pignoramento)
-        gg_triennio = (fine_triennio - inizio_triennio).days  # 1095 o 1096
+        # --- Confini del triennio (in base al metodo selezionato) ---
+        inizio_triennio, fine_triennio = calcola_triennio(
+            data_pignoramento, metodo_triennio, data_aggiudicazione=data_fine
+        )
+        gg_triennio = (fine_triennio - inizio_triennio).days
 
-        # --- Fase 3 (post-triennio): dal pignoramento a data_fine ---
+        # --- Fase 3 (post-triennio): dalla fine del triennio a data_fine ---
         gg_post = max((data_fine - fine_triennio).days, 0)
 
         # Spaccato anno per anno del tasso legale (calcolato sul capitale
@@ -1065,14 +1102,25 @@ with tab1:
         with st.expander("🔍 Dettaglio calcoli Art. 2855 c.c."):
             st.markdown("## 📐 Matematica della Tripartizione ex Art. 2855 c.c.")
 
-            # --- Box didattico: perché il triennio inizia esattamente DATA-3 ANNI ---
+            # --- Box didattico: perché il triennio inizia in quella data ---
+            if metodo_triennio == METODO_TRIENNIO_SOLARE:
+                spiegazione_metodo = (
+                    f"Perché, con il metodo **Anno solare** (prassi dei "
+                    f"conteggi professionali), il triennio garantito copre "
+                    f"l'**annata in corso al pignoramento più le 2 precedenti**, "
+                    f"con inizio al **1° gennaio** ({inizio_triennio.strftime('%d/%m/%Y')})."
+                )
+            else:
+                spiegazione_metodo = (
+                    f"Perché, con il metodo **3 anni esatti**, il triennio "
+                    f"garantito copre **esattamente i 3 anni antecedenti alla "
+                    f"data del pignoramento**."
+                )
             st.info(
-                f"**Perché il triennio ipotecario (Fase 2) inizia esattamente "
+                f"**Perché il triennio ipotecario (Fase 2) inizia "
                 f"il {inizio_triennio.strftime('%d/%m/%Y')} se la prima rata "
                 f"insoluta è scaduta prima?**\n\n"
-                f"Perché, secondo la prassi prevalente nei calcoli esecutivi "
-                f"in base all'**Art. 2855 c.c.**, il triennio garantito copre "
-                f"**esattamente i 3 anni antecedenti alla data del pignoramento**.\n\n"
+                f"{spiegazione_metodo}\n\n"
                 f"Tutto il periodo precedente a questa data **non gode del "
                 f"privilegio ipotecario** e finisce nella **Fase 1 (Chirografo)**."
             )
@@ -1115,15 +1163,21 @@ with tab1:
             st.markdown("---")
             st.markdown("### 🟢 FASE 2 — TRIENNIO (Ipotecario)")
 
+            if metodo_triennio == METODO_TRIENNIO_SOLARE:
+                nota_inizio = "*(1° gennaio dell'annata in corso − 2 anni)*"
+                nota_fine = "*(fine annata in corso, troncata all'aggiudicazione)*"
+            else:
+                nota_inizio = "*(data pignoramento − 3 anni esatti)*"
+                nota_fine = "*(coincide con la data del pignoramento)*"
+
             st.markdown(f"""
             **Inizio triennio:** **{inizio_triennio.strftime('%d/%m/%Y')}**
-            *(data pignoramento − 3 anni esatti)*
+            {nota_inizio}
 
             **Fine triennio:** **{fine_triennio.strftime('%d/%m/%Y')}**
-            *(coincide con la data del pignoramento)*
+            {nota_fine}
 
             **Giorni del triennio:** `{gg_triennio}` giorni
-            *({"1096 = include un 29 febbraio" if gg_triennio == 1096 else "1095 = nessun 29 febbraio nel periodo"})*
 
             **Capitale di riferimento:**
             - Per le **rate scadute**: singola rata insoluta (**{fmt_eur(importo_rata)}**)
