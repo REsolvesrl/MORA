@@ -7,12 +7,49 @@ import pytest
 from calcoli import (
     mora_su_periodo,
     interesse_semplice,
+    interesse_periodo,
+    interesse_legale_pro_rata,
+    e_bisestile,
     ripartisci_credito,
     calcola_mora_unificato,
     _normalizza_scadenzario_mora,
     _tasso_mora_alla_data,
     METODO_TRIENNIO_SOLARE,
 )
+
+
+class TestAnnoCivile:
+    def test_e_bisestile(self):
+        assert e_bisestile(2024) is True
+        assert e_bisestile(2023) is False
+        assert e_bisestile(2000) is True    # divisibile per 400
+        assert e_bisestile(1900) is False   # divisibile per 100 non 400
+
+    def test_interesse_periodo_bisestile_usa_366(self):
+        # 2024 bisestile: divisore 366 con anno_civile=True
+        r = interesse_periodo(10000, 0.05, date(2024, 1, 1), date(2024, 2, 1))
+        assert r == pytest.approx(10000 * 0.05 * 31 / 366)
+
+    def test_interesse_periodo_365_fisso(self):
+        r = interesse_periodo(10000, 0.05, date(2024, 1, 1), date(2024, 2, 1),
+                              anno_civile=False)
+        assert r == pytest.approx(10000 * 0.05 * 31 / 365)
+
+    def test_verifica_riga_bassotti_29feb2024(self):
+        # BASSOTTI: 29/02/2024, 29 giorni al 2,50% legale, capitale 372.535,85
+        # Anno civile (366) → 737,95 (il conteggio ufficiale)
+        C = 372535.85
+        r = interesse_periodo(C, 0.025, date(2024, 2, 1), date(2024, 3, 1))
+        assert r == pytest.approx(737.95, abs=0.01)
+
+    def test_legale_pro_rata_bisestile_default_366(self):
+        # Un anno bisestile pieno al tasso legale → interesse = C*tasso
+        # (366/366 = 1) indipendentemente dal divisore
+        tot, seg = interesse_legale_pro_rata(
+            10000, date(2024, 1, 1), date(2025, 1, 1)
+        )
+        assert seg[0]["base"] == 366
+        assert seg[0]["giorni"] == 366
 
 
 class TestNormalizzaScadenzario:

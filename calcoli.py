@@ -99,15 +99,55 @@ def interesse_semplice(capitale, tasso_annuo, giorni, base_anno=365):
         return 0.0
     return capitale * tasso_annuo * (giorni / base_anno)
 
+
+def e_bisestile(anno):
+    """True se l'anno è bisestile (regola gregoriana)."""
+    return anno % 4 == 0 and (anno % 100 != 0 or anno % 400 == 0)
+
+
+def interesse_periodo(capitale, tasso, data_inizio, data_fine, anno_civile=True):
+    """
+    Interesse semplice al `tasso` dato su [data_inizio, data_fine).
+
+    - anno_civile=True  → "Anno Civile": il periodo viene spezzato ad ogni
+      1° gennaio e ciascun segmento è diviso per i giorni effettivi dell'anno
+      (366 per i bisestili, 365 altrimenti). È la convenzione dei conteggi
+      professionali reali.
+    - anno_civile=False → divisore fisso 365 su tutto il periodo
+      ("anno commerciale").
+    """
+    if data_fine <= data_inizio or capitale <= 0 or tasso == 0:
+        return 0.0
+    if not anno_civile:
+        return interesse_semplice(
+            capitale, tasso, giorni_tra(data_inizio, data_fine), 365
+        )
+    totale = 0.0
+    cursore = data_inizio
+    while cursore < data_fine:
+        prossimo_capodanno = date(cursore.year + 1, 1, 1)
+        fine_segmento = min(prossimo_capodanno, data_fine)
+        gg = giorni_tra(cursore, fine_segmento)
+        base = 366 if e_bisestile(cursore.year) else 365
+        totale += interesse_semplice(capitale, tasso, gg, base)
+        cursore = fine_segmento
+    return totale
+
+
 def tasso_legale_per_anno(anno):
     """Restituisce il tasso legale vigente in un dato anno."""
     return TASSI_LEGALI.get(anno, TASSO_LEGALE_DEFAULT)
 
-def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
+def interesse_legale_pro_rata(capitale, data_inizio, data_fine, anno_civile=True):
     """
     Calcola interessi al tasso legale ex art. 1284 c.c. spezzando il periodo
     ad ogni 1° gennaio (pro-rata temporis), perché il tasso legale cambia
     ad ogni cambio d'anno solare.
+
+    `anno_civile`:
+      - True  → divisore per segmento = giorni effettivi dell'anno
+        (366 per i bisestili, 365 altrimenti).
+      - False → divisore fisso 365.
 
     Restituisce una tupla `(totale, segmenti)` dove `segmenti` è una lista
     di dict, uno per anno solare attraversato, con le chiavi:
@@ -115,6 +155,7 @@ def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
         - "fine":     date di fine del segmento (esclusa)
         - "giorni":   numero di giorni del segmento
         - "tasso":    tasso legale dell'anno (decimale, es. 0.025)
+        - "base":     divisore usato (365 o 366)
         - "interesse": interesse maturato nel segmento (€)
     """
     totale = 0.0
@@ -125,12 +166,14 @@ def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
         fine_segmento = min(prossimo_capodanno, data_fine)
         gg = giorni_tra(cursore, fine_segmento)
         tasso = tasso_legale_per_anno(cursore.year)
-        interesse = interesse_semplice(capitale, tasso, gg)
+        base = 366 if (anno_civile and e_bisestile(cursore.year)) else 365
+        interesse = interesse_semplice(capitale, tasso, gg, base)
         segmenti.append({
             "inizio": cursore,
             "fine": fine_segmento,
             "giorni": gg,
             "tasso": tasso,
+            "base": base,
             "interesse": interesse,
         })
         totale += interesse
@@ -173,16 +216,18 @@ def _tasso_mora_alla_data(scadenzario, d):
     return tasso
 
 
-def mora_su_periodo(capitale, tasso_mora, data_inizio, data_fine, base_anno=365):
+def mora_su_periodo(capitale, tasso_mora, data_inizio, data_fine, anno_civile=True):
     """
     Interesse di mora su [data_inizio, data_fine), con `tasso_mora` che può
     essere uno scalare (tasso fisso) o uno scadenzario (tasso variabile).
 
-    Se lo scadenzario prevede cambi di tasso all'interno del periodo, il
-    calcolo viene spezzato ad ogni data di cambio e sommato (divisore fisso
-    `base_anno`, coerente col resto del software).
+    Il periodo viene spezzato ad ogni data di cambio tasso; ogni segmento è
+    calcolato con `interesse_periodo`, che applica la convenzione del
+    divisore:
+      - anno_civile=True  → 365/366 (366 per i bisestili);
+      - anno_civile=False → 365 fisso.
 
-    Con un tasso scalare, il risultato è identico a
+    Con un tasso scalare e anno_civile=False il risultato è identico a
     `interesse_semplice(capitale, tasso_mora, giorni)`.
     """
     if data_fine <= data_inizio or capitale <= 0:
@@ -194,9 +239,8 @@ def mora_su_periodo(capitale, tasso_mora, data_inizio, data_fine, base_anno=365)
     totale = 0.0
     for i in range(len(punti) - 1):
         a, b = punti[i], punti[i + 1]
-        gg = giorni_tra(a, b)
         tasso = _tasso_mora_alla_data(scad, a)
-        totale += interesse_semplice(capitale, tasso, gg, base_anno)
+        totale += interesse_periodo(capitale, tasso, a, b, anno_civile)
     return totale
 
 def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
@@ -361,7 +405,7 @@ def calcola_triennio(data_pignoramento, metodo=METODO_TRIENNIO_ESATTO,
 def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
                        data_pignoramento, data_fine,
                        metodo_triennio=METODO_TRIENNIO_ESATTO,
-                       data_aggiudicazione=None):
+                       data_aggiudicazione=None, anno_civile=True):
     """
     Filtro Art. 2855 c.c. applicato a una "voce" di interessi (rata o capitale).
 
@@ -379,6 +423,7 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     `metodo_triennio` seleziona il criterio del triennio (vedi calcola_triennio).
     `data_aggiudicazione` è usata dal metodo "solare" per troncare la fine del
     triennio; se None, si usa `data_fine`.
+    `anno_civile` seleziona il divisore giorni (True = 365/366, False = 365).
     """
     if data_aggiudicazione is None:
         data_aggiudicazione = data_fine
@@ -391,7 +436,8 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     # --- FASE 1 — PRE-TRIENNIO (chirografario @ mora) ---
     if data_inizio_mora < inizio_triennio:
         fine_pre = min(inizio_triennio, data_fine)
-        int_pre = mora_su_periodo(capitale, tasso_mora, data_inizio_mora, fine_pre)
+        int_pre = mora_su_periodo(capitale, tasso_mora, data_inizio_mora,
+                                  fine_pre, anno_civile)
         risultato["chirografario"] += int_pre
         risultato["dettaglio"]["pre_triennio_chiro"] = int_pre
 
@@ -399,7 +445,8 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     inizio_t = max(data_inizio_mora, inizio_triennio)
     fine_t = min(fine_triennio, data_fine)
     if fine_t > inizio_t:
-        int_triennio = mora_su_periodo(capitale, tasso_mora, inizio_t, fine_t)
+        int_triennio = mora_su_periodo(capitale, tasso_mora, inizio_t,
+                                       fine_t, anno_civile)
         risultato["ipotecario"] += int_triennio
         risultato["dettaglio"]["triennio_ipo_mora"] = int_triennio
 
@@ -407,9 +454,10 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     inizio_post = max(data_inizio_mora, fine_triennio)
     if data_fine > inizio_post:
         int_legale, segmenti_legale = interesse_legale_pro_rata(
-            capitale, inizio_post, data_fine
+            capitale, inizio_post, data_fine, anno_civile
         )
-        int_mora_post = mora_su_periodo(capitale, tasso_mora, inizio_post, data_fine)
+        int_mora_post = mora_su_periodo(capitale, tasso_mora, inizio_post,
+                                        data_fine, anno_civile)
 
         risultato["ipotecario"] += int_legale
         risultato["chirografario"] += (int_mora_post - int_legale)
@@ -443,7 +491,8 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
                            data_decadenza_effettiva,
                            data_pignoramento, data_fine,
                            piano_ammortamento=None,
-                           metodo_triennio=METODO_TRIENNIO_ESATTO):
+                           metodo_triennio=METODO_TRIENNIO_ESATTO,
+                           anno_civile=True):
     """
     MOTORE UNICO valido sia per CASO A (Lettera DBT) che CASO B (Precetto).
     L'unica differenza tra i due casi è 'data_decadenza_effettiva':
@@ -536,6 +585,7 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
             data_fine=data_decadenza_effettiva,   # <-- la rata corre fino alla decadenza
             metodo_triennio=metodo_triennio,
             data_aggiudicazione=data_fine,        # aggiudicazione globale per i confini triennio
+            anno_civile=anno_civile,
         )
         totale["ipotecario"] += rip["ipotecario"]
         totale["chirografario"] += rip["chirografario"]
@@ -578,6 +628,7 @@ def calcola_mora_unificato(importo_rata, data_prima_rata, frequenza,
         data_fine=data_fine,
         metodo_triennio=metodo_triennio,
         data_aggiudicazione=data_fine,
+        anno_civile=anno_civile,
     )
     totale = _accumula(totale, rip_capitale, "FASE_2_capitale_residuo")
 

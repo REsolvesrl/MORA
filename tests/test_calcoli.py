@@ -82,8 +82,8 @@ class TestTassoLegalePerAnno:
 class TestInteresseLegaleProRata:
     def test_dentro_singolo_anno(self):
         # 1000 € dal 1/2/2024 al 1/3/2024 (29 giorni, anno 2024 bisestile)
-        # tasso 2024 = 0.0250
-        atteso = 1000 * 0.0250 * 29 / 365
+        # tasso 2024 = 0.0250. Anno civile (default) → divisore 366.
+        atteso = 1000 * 0.0250 * 29 / 366
         totale, segmenti = interesse_legale_pro_rata(
             1000, date(2024, 2, 1), date(2024, 3, 1)
         )
@@ -93,45 +93,59 @@ class TestInteresseLegaleProRata:
         assert segmenti[0]["fine"] == date(2024, 3, 1)
         assert segmenti[0]["giorni"] == 29
         assert segmenti[0]["tasso"] == 0.0250
+        assert segmenti[0]["base"] == 366
         assert segmenti[0]["interesse"] == pytest.approx(atteso)
+
+    def test_anno_civile_false_usa_365(self):
+        # Con anno_civile=False il divisore resta 365 anche nel bisestile
+        atteso = 1000 * 0.0250 * 29 / 365
+        totale, segmenti = interesse_legale_pro_rata(
+            1000, date(2024, 2, 1), date(2024, 3, 1), anno_civile=False
+        )
+        assert totale == pytest.approx(atteso)
+        assert segmenti[0]["base"] == 365
 
     def test_a_cavallo_di_capodanno(self):
         # 1000 € dal 1/7/2024 al 1/7/2025
-        # 2024 (tasso 0.0250) per 184 gg + 2025 (tasso 0.0200) per 181 gg
-        atteso = 1000 * 0.0250 * 184 / 365 + 1000 * 0.0200 * 181 / 365
+        # 2024 (0.0250, bisestile /366) 184 gg + 2025 (0.0200, /365) 181 gg
+        atteso = 1000 * 0.0250 * 184 / 366 + 1000 * 0.0200 * 181 / 365
         totale, segmenti = interesse_legale_pro_rata(
             1000, date(2024, 7, 1), date(2025, 7, 1)
         )
         assert totale == pytest.approx(atteso)
         assert len(segmenti) == 2
-        # Primo segmento: 2024
+        # Primo segmento: 2024 (bisestile → base 366)
         assert segmenti[0]["inizio"] == date(2024, 7, 1)
         assert segmenti[0]["fine"] == date(2025, 1, 1)
         assert segmenti[0]["giorni"] == 184
         assert segmenti[0]["tasso"] == 0.0250
-        # Secondo segmento: 2025
+        assert segmenti[0]["base"] == 366
+        # Secondo segmento: 2025 (base 365)
         assert segmenti[1]["inizio"] == date(2025, 1, 1)
         assert segmenti[1]["fine"] == date(2025, 7, 1)
         assert segmenti[1]["giorni"] == 181
         assert segmenti[1]["tasso"] == 0.0200
+        assert segmenti[1]["base"] == 365
 
     def test_tre_anni_solari(self):
         # 1000 € dal 15/06/2024 al 30/06/2026 (data_fine ESCLUSA)
-        # 2024 (0.0250): 15/06 → 01/01/2025 = 200 gg
-        # 2025 (0.0200): 01/01 → 01/01/2026 = 365 gg
-        # 2026 (0.0160): 01/01 → 30/06/2026 = 180 gg (esclude il 30/06)
+        # 2024 (0.0250, /366): 15/06 → 01/01/2025 = 200 gg
+        # 2025 (0.0200, /365): 01/01 → 01/01/2026 = 365 gg
+        # 2026 (0.0160, /365): 01/01 → 30/06/2026 = 180 gg (esclude il 30/06)
         totale, segmenti = interesse_legale_pro_rata(
             1000, date(2024, 6, 15), date(2026, 6, 30)
         )
         assert len(segmenti) == 3
         assert segmenti[0]["giorni"] == 200
         assert segmenti[0]["tasso"] == 0.0250
+        assert segmenti[0]["base"] == 366
         assert segmenti[1]["giorni"] == 365
         assert segmenti[1]["tasso"] == 0.0200
+        assert segmenti[1]["base"] == 365
         assert segmenti[2]["giorni"] == 180
         assert segmenti[2]["tasso"] == 0.0160
         atteso = (
-            1000 * 0.0250 * 200 / 365
+            1000 * 0.0250 * 200 / 366
             + 1000 * 0.0200 * 365 / 365
             + 1000 * 0.0160 * 180 / 365
         )
@@ -305,12 +319,14 @@ class TestRipartisciCredito:
         # data_inizio_mora = 16/12/2018 (giorno esatto inizio triennio)
         # data_fine = 16/12/2021 (giorno esatto fine triennio)
         # → tutto Fase 2, nessun pre, nessun post
+        # anno_civile=False per confrontare con la formula 365 fissa semplice.
         r = ripartisci_credito(
             capitale=10000,
             tasso_mora=0.10,
             data_inizio_mora=date(2018, 12, 16),
             data_pignoramento=date(2021, 12, 16),
             data_fine=date(2021, 12, 16),
+            anno_civile=False,
         )
         assert "pre_triennio_chiro" not in r["dettaglio"]
         assert "triennio_ipo_mora" in r["dettaglio"]
@@ -322,7 +338,8 @@ class TestRipartisciCredito:
 
     def test_quadratura_totale(self):
         # La somma di ipotecario + chirografario deve coincidere con la mora
-        # complessiva a tasso pieno sull'intero periodo
+        # complessiva a tasso pieno sull'intero periodo.
+        # anno_civile=False per confronto diretto con interesse_semplice (365).
         capitale = 10000
         tasso_mora = 0.08
         data_inizio = date(2020, 1, 1)
@@ -333,6 +350,7 @@ class TestRipartisciCredito:
             data_inizio_mora=data_inizio,
             data_pignoramento=self.DATA_PIGN,
             data_fine=data_fine,
+            anno_civile=False,
         )
         gg = giorni_tra(data_inizio, data_fine)
         mora_piena = interesse_semplice(capitale, tasso_mora, gg)

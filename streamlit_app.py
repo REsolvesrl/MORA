@@ -362,6 +362,26 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("Base di calcolo giorni")
+    base_giorni_label = st.radio(
+        "Divisore per il calcolo degli interessi",
+        options=[
+            "Anno civile (365 / 366 bisestili)",
+            "Anno commerciale (365 fisso)",
+        ],
+        index=0,
+        key="sb_base_giorni",
+        help=(
+            "**Anno civile:** ogni segmento è diviso per i giorni effettivi "
+            "dell'anno (366 nei bisestili come il 2024). È la convenzione dei "
+            "conteggi professionali reali (doValue, Triple A).\n\n"
+            "**Anno commerciale:** divisore sempre 365. Più semplice, ma non "
+            "replica esattamente gli anni bisestili."
+        ),
+    )
+    anno_civile = base_giorni_label.startswith("Anno civile")
+
+    st.divider()
     st.subheader("📄 Esportazione PDF")
     pdf_password = st.text_input(
         "Password apertura PDF (opzionale)",
@@ -821,6 +841,7 @@ with tab1:
             **params_comuni, data_fine=data_fine,
             piano_ammortamento=piano_ammortamento,
             metodo_triennio=metodo_triennio,
+            anno_civile=anno_civile,
         )
 
         # --- GIRO A (Check GBV): calcolo congelato alla data di attualizzazione ---
@@ -844,6 +865,7 @@ with tab1:
                     **params_comuni, data_fine=data_attualizzazione_gbv,
                     piano_ammortamento=piano_ammortamento,
                     metodo_triennio=metodo_triennio,
+                    anno_civile=anno_civile,
                 )
 
         # --- Metriche totali generali ---
