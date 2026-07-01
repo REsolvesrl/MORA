@@ -174,7 +174,9 @@ with st.sidebar:
         st.caption(
             "Carica i documenti in PDF: il software estrarrà "
             "automaticamente **capitale**, **tassi**, **date** e li "
-            "userà come default nei campi qui sotto."
+            "userà come default nei campi qui sotto.\n\n"
+            "✅ Supporta anche **PDF scansionati** tramite OCR (Tesseract). "
+            "L'OCR è più lento (15-60 sec per PDF): abbi pazienza."
         )
         pdf_docs = st.file_uploader(
             "Carica Documenti (Precetto, Mutuo, DBT) per Autocompilazione",
@@ -206,22 +208,50 @@ with st.sidebar:
             )
 
         if st.button("🔍 Analizza e Compila", disabled=not pdf_docs):
-            with st.spinner("Estraggo il testo dai PDF..."):
-                testi = []
+            testi = []
+            metodi_usati = {}   # nome_file -> metodo
+            with st.status("Elaboro i PDF...", expanded=True) as status:
                 for f in pdf_docs:
+                    st.write(f"📄 {f.name}: leggo con pdfplumber...")
                     try:
-                        t = estrai_testo_da_pdf(f)
-                        if t:
+                        t, metodo = estrai_testo_da_pdf(f, ocr_fallback=True)
+                        metodi_usati[f.name] = metodo
+                        if metodo == "ocr":
+                            st.write(
+                                f"   ↳ PDF scansionato: passo all'**OCR** "
+                                f"(può richiedere 15-60 sec)."
+                            )
+                        elif metodo == "vettoriale":
+                            st.write(f"   ↳ ✅ Testo estratto ({len(t)} caratteri).")
+                        elif metodo == "errore_ocr":
+                            st.write(
+                                f"   ↳ ⚠️ OCR non disponibile o fallito: "
+                                f"{t[:200]}"
+                            )
+                            t = ""
+                        else:
+                            st.write("   ↳ ⚠️ Nessun testo estratto.")
+                        if t and t.strip():
                             testi.append(f"### DOCUMENTO: {f.name}\n{t}")
                     except Exception as e:
-                        st.warning(f"⚠️ Errore lettura {f.name}: {e}")
-                testo_completo = "\n\n".join(testi)
+                        st.write(f"   ↳ ⛔ Errore lettura: {e}")
+                        metodi_usati[f.name] = "errore"
+                status.update(label="Lettura PDF completata", state="complete")
+            testo_completo = "\n\n".join(testi)
 
             if not testo_completo.strip():
-                st.error(
-                    "⛔ Nessun testo estratto. I PDF potrebbero essere "
-                    "scansionati (serve OCR)."
-                )
+                if any(m == "errore_ocr" for m in metodi_usati.values()):
+                    st.error(
+                        "⛔ **OCR non disponibile**. I PDF sono scansionati "
+                        "e servirebbe Tesseract per leggerli. Su Streamlit "
+                        "Cloud verifica che `packages.txt` contenga: "
+                        "`tesseract-ocr`, `tesseract-ocr-ita`, "
+                        "`poppler-utils`, e riavvia l'app."
+                    )
+                else:
+                    st.error(
+                        "⛔ Nessun testo estratto dai PDF forniti."
+                    )
             else:
                 with st.spinner("Estraggo i dati con l'AI..."):
                     try:

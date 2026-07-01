@@ -23,8 +23,73 @@ import re
 # 1) ESTRAZIONE TESTO DAI PDF
 # ==========================================================
 
-def estrai_testo_da_pdf(file_obj):
-    """Ritorna il testo completo del PDF (concatenazione di tutte le pagine)."""
+# Soglia minima di caratteri per considerare "riuscita" l'estrazione
+# di pdfplumber (sotto la soglia scatta il fallback OCR).
+_MIN_CHAR_PLUMBER = 100
+
+
+def estrai_testo_con_ocr(pdf_bytes, lingua="ita+eng", dpi=300):
+    """
+    OCR di un PDF scansionato: converte ogni pagina in immagine
+    (pdf2image + poppler) e riconosce il testo con Tesseract.
+
+    Solleva RuntimeError con messaggio utile se Tesseract o poppler
+    non sono installati sul sistema (Streamlit Cloud richiede
+    packages.txt).
+    """
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except ImportError as e:
+        raise RuntimeError(
+            "Librerie OCR non installate. Aggiungi 'pytesseract' e "
+            "'pdf2image' a requirements.txt."
+        ) from e
+
+    try:
+        immagini = convert_from_bytes(pdf_bytes, dpi=dpi)
+    except Exception as e:
+        raise RuntimeError(
+            "Impossibile convertire il PDF in immagini. "
+            "Su Streamlit Cloud verifica che 'poppler-utils' sia in "
+            f"packages.txt. Dettaglio: {e}"
+        )
+
+    testo_pagine = []
+    for immagine in immagini:
+        try:
+            t = pytesseract.image_to_string(immagine, lang=lingua)
+        except pytesseract.TesseractNotFoundError as e:
+            raise RuntimeError(
+                "Motore Tesseract non installato sul sistema. "
+                "Su Streamlit Cloud aggiungi 'tesseract-ocr' e "
+                "'tesseract-ocr-ita' a packages.txt."
+            ) from e
+        except Exception as e:
+            # Se una pagina fallisce, continuo con le altre
+            print(f"[autofill/ocr] Pagina fallita: {e}")
+            continue
+        if t and t.strip():
+            testo_pagine.append(t)
+
+    return "\n\n".join(testo_pagine)
+
+
+def estrai_testo_da_pdf(file_obj, ocr_fallback=True):
+    """
+    Estrae il testo di un PDF.
+
+    Strategia:
+      1) Prima tenta con pdfplumber (veloce, funziona su PDF vettoriali).
+      2) Se pdfplumber restituisce poco/nessun testo (< _MIN_CHAR_PLUMBER)
+         e ocr_fallback=True, fa fallback su OCR Tesseract.
+
+    Ritorna una tupla `(testo, metodo)`:
+      - metodo = "vettoriale" (estratto da pdfplumber)
+      - metodo = "ocr"        (estratto da Tesseract)
+      - metodo = "vuoto"      (nessun testo estraibile, OCR non disponibile)
+      - metodo = "errore_ocr" (l'OCR ha fallito, dettaglio in testo)
+    """
     try:
         import pdfplumber
     except ImportError:
@@ -33,17 +98,36 @@ def estrai_testo_da_pdf(file_obj):
         )
     raw = file_obj.read() if hasattr(file_obj, "read") else file_obj
     if not raw:
-        return ""
-    testo = []
+        return "", "vuoto"
+
+    # --- Tentativo 1: pdfplumber (veloce) ---
+    testo_plumber = ""
     try:
         with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            parti = []
             for pagina in pdf.pages:
                 t = pagina.extract_text() or ""
                 if t.strip():
-                    testo.append(t)
+                    parti.append(t)
+            testo_plumber = "\n\n".join(parti)
     except Exception as e:
-        raise RuntimeError(f"Errore lettura PDF: {e}")
-    return "\n\n".join(testo)
+        print(f"[autofill] pdfplumber ha fallito: {e}")
+
+    if len(testo_plumber.strip()) >= _MIN_CHAR_PLUMBER:
+        return testo_plumber, "vettoriale"
+
+    if not ocr_fallback:
+        return testo_plumber, ("vuoto" if not testo_plumber.strip() else "vettoriale")
+
+    # --- Tentativo 2: OCR Tesseract ---
+    try:
+        testo_ocr = estrai_testo_con_ocr(raw)
+        if testo_ocr.strip():
+            return testo_ocr, "ocr"
+        return testo_plumber, "vuoto"
+    except RuntimeError as e:
+        # OCR non disponibile o fallito: ritorno quel poco che avevo + errore
+        return testo_plumber or str(e), "errore_ocr"
 
 
 # ==========================================================
