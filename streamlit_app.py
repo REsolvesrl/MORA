@@ -38,9 +38,8 @@ st.set_page_config(
     layout="wide",
 )
 
-# Logo Resolve in alto nella sidebar (nativo Streamlit)
-if _ha_logo:
-    st.logo(LOGO_PATH, icon_image=LOGO_PATH, size="large")
+# (Il logo grande è mostrato in cima alla sidebar via st.image, più sotto.
+#  La favicon del browser resta impostata da page_icon in set_page_config.)
 
 # ---- Palette di brand (dark navy + oro dal logo Resolve) ----
 NAVY = "#1A2744"
@@ -52,11 +51,6 @@ CREMA = "#ECE7DA"
 # ---- Stile dark: tab, titoli serif, accenti oro ----
 st.markdown(f"""
     <style>
-    /* Logo più grande in cima alla sidebar */
-    img[data-testid="stLogo"] {{
-        height: 4.2rem;
-        max-height: 4.2rem;
-    }}
     /* Titoli in serif per echeggiare il wordmark REsolve */
     h1, h2, h3 {{
         font-family: Georgia, 'Times New Roman', serif !important;
@@ -108,9 +102,9 @@ st.caption("Strumento di supporto Resolve S.r.l. · Verificare sempre i risultat
 # ---- Sidebar: parametri comuni ----
 with st.sidebar:
 
-    # Logo Resolve grande in cima alla sidebar (controllo pieno sulla dimensione)
+    # Logo Resolve in cima alla sidebar (dimensione controllata in pixel)
     if _ha_logo:
-        st.image(LOGO_PATH, width="stretch")
+        st.image(LOGO_PATH, width=180)
 
     # ==========================================================
     # ✨ MAGIC AUTOFILL — Estrazione automatica dai PDF legali
