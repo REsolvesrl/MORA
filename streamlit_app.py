@@ -108,6 +108,10 @@ st.caption("Strumento di supporto Resolve S.r.l. · Verificare sempre i risultat
 # ---- Sidebar: parametri comuni ----
 with st.sidebar:
 
+    # Logo Resolve grande in cima alla sidebar (controllo pieno sulla dimensione)
+    if _ha_logo:
+        st.image(LOGO_PATH, width="stretch")
+
     # ==========================================================
     # ✨ MAGIC AUTOFILL — Estrazione automatica dai PDF legali
     # ==========================================================
