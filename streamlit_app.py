@@ -14,6 +14,8 @@ from calcoli import (
     calcola_mora_unificato,
     estrai_rate_insolute_da_piano,
     genera_piano_ammortamento,
+    calcola_compenso_custode,
+    calcola_compenso_delegato,
 )
 from piano_io import carica_piano_da_file
 from pdf_export import (
@@ -1361,41 +1363,128 @@ with tab2:
             step=50.0, format="%.2f"
         )
 
-        r3, r4 = st.columns(2)
-        custode_forfait = SPESE_IMMOBILIARE["custode_delegato"]
-        custode_pct = valore_bene * SPESE_IMMOBILIARE["perc_custode"]
-        custode_default = max(custode_forfait, custode_pct)
-
-        custode_val = r3.number_input(
-            "Custode / Professionista delegato",
-            min_value=0.0, value=float(custode_default),
-            step=50.0, format="%.2f",
-            help=f"Forfait: {fmt_eur(custode_forfait)} | 3% del valore: "
-                 f"{fmt_eur(custode_pct)} | Default: {fmt_eur(custode_default)}"
-        )
-        pubblicita_val = r4.number_input(
+        pubblicita_val = st.number_input(
             "Pubblicità asta (PVP)",
             min_value=0.0, value=float(SPESE_IMMOBILIARE["pubblicita"]),
             step=50.0, format="%.2f"
         )
 
-        r5, r6 = st.columns(2)
-        spese_legali_nostre_val = r5.number_input(
+        spese_legali_nostre_val = st.number_input(
             "Nostre spese legali",
             min_value=0.0, value=float(SPESE_IMMOBILIARE["spese_legali_nostre"]),
             step=50.0, format="%.2f"
         )
 
-        # Placeholder per allineamento grafico
-        r6.markdown("&nbsp;")
+        # ============================================================
+        # COMPENSI PROFESSIONALI CALCOLATI (Custode + Delegato)
+        # ============================================================
+        st.markdown("#### ⚖️ Compensi professionali (calcolo automatico)")
+        st.caption(
+            "Calcolati automaticamente sul **valore di aggiudicazione** "
+            f"(= valore stimato del bene: **{fmt_eur(valore_bene)}**) "
+            "secondo il D.M. 80/2009 (Custode) e il D.M. 227/2015 "
+            "(Delegato). Puoi sovrascrivere i valori manualmente."
+        )
 
-        totale_spese = spese_vive_val + ctu_val + custode_val + pubblicita_val + spese_legali_nostre_val
+        # Calcolo automatico (IVA e oneri inclusi = totale documento)
+        det_custode = calcola_compenso_custode(valore_bene)
+        det_delegato = calcola_compenso_delegato(valore_bene)
+        custode_auto = det_custode["totale"]
+        delegato_auto = det_delegato["totale"]
+
+        rc1, rc2 = st.columns(2)
+        custode_val = rc1.number_input(
+            "Compenso Custode Stimato (IVA e oneri incl.)",
+            min_value=0.0, value=float(round(custode_auto, 2)),
+            step=50.0, format="%.2f",
+            help="Calcolo automatico ex D.M. 80/2009 (scaglioni + 20% "
+                 "maggiorazione + 10% spese generali + 4% cassa + 22% IVA). "
+                 "Modificabile."
+        )
+        delegato_val = rc2.number_input(
+            "Compenso Delegato Stimato (IVA e oneri incl.)",
+            min_value=0.0, value=float(round(delegato_auto, 2)),
+            step=50.0, format="%.2f",
+            help="Calcolo automatico ex D.M. 227/2015 (4 fasi + 10% spese "
+                 "generali + 4% cassa + 22% IVA). Modificabile."
+        )
+
+        with st.expander(
+            "🔍 Dettaglio Calcolo Compensi (D.M. 80/2009 e D.M. 227/2015)"
+        ):
+            # ---- CUSTODE ----
+            st.markdown("##### 👤 Compenso Custode giudiziario — D.M. 80/2009")
+            righe_c = [
+                "| Scaglione | Base | Aliquota | Importo |",
+                "|:----------|-----:|:--------:|--------:|",
+            ]
+            for sc in det_custode["scaglioni"]:
+                a_label = (
+                    "∞" if sc["a"] == float("inf") else fmt_eur(sc["a"])
+                )
+                righe_c.append(
+                    f"| da {fmt_eur(sc['da'])} a {a_label} | "
+                    f"{fmt_eur(sc['base'])} | "
+                    f"{fmt_pct(sc['aliquota'])} | "
+                    f"{fmt_eur(sc['importo'])} |"
+                )
+            st.markdown("\n".join(righe_c))
+            st.markdown(
+                f"- Compenso a scaglioni: **{fmt_eur(det_custode['compenso_scaglioni'])}**\n"
+                f"- Maggiorazione {fmt_pct(det_custode['maggiorazione_perc'], 0)} "
+                f"(indennità liberazione / difficoltà): "
+                f"**+ {fmt_eur(det_custode['maggiorazione_importo'])}**\n"
+                f"- Compenso netto: **{fmt_eur(det_custode['compenso_netto'])}**\n"
+                f"- Spese generali (10%): + {fmt_eur(det_custode['spese_generali'])}\n"
+                f"- Cassa previdenza (4%): + {fmt_eur(det_custode['cassa'])}\n"
+                f"- Imponibile: **{fmt_eur(det_custode['imponibile'])}**\n"
+                f"- IVA (22%): + {fmt_eur(det_custode['iva'])}\n"
+                f"- **TOTALE Custode: {fmt_eur(det_custode['totale'])}**"
+            )
+
+            st.divider()
+
+            # ---- DELEGATO ----
+            st.markdown("##### 🏛️ Compenso Delegato alla vendita — D.M. 227/2015")
+            st.markdown(
+                f"Scaglione di valore → **{fmt_eur(det_delegato['compenso_fase'])} "
+                f"per fase** (4 fasi):"
+            )
+            righe_d = [
+                "| Fase | Compenso |",
+                "|:-----|--------:|",
+            ]
+            for fase in det_delegato["fasi"]:
+                righe_d.append(f"| {fase['nome']} | {fmt_eur(fase['importo'])} |")
+            righe_d.append(
+                f"| **Totale tabellare** | **{fmt_eur(det_delegato['compenso_netto'])}** |"
+            )
+            st.markdown("\n".join(righe_d))
+            st.markdown(
+                f"- Compenso tabellare: **{fmt_eur(det_delegato['compenso_netto'])}**\n"
+                f"- Spese generali (10%): + {fmt_eur(det_delegato['spese_generali'])}\n"
+                f"- Cassa previdenza (4%): + {fmt_eur(det_delegato['cassa'])}\n"
+                f"- Imponibile: **{fmt_eur(det_delegato['imponibile'])}**\n"
+                f"- IVA (22%): + {fmt_eur(det_delegato['iva'])}\n"
+                f"- **TOTALE Delegato: {fmt_eur(det_delegato['totale'])}**"
+            )
+            st.caption(
+                "ℹ️ I compensi sono stime basate sul valore di aggiudicazione. "
+                "La liquidazione finale spetta al Giudice dell'esecuzione, "
+                "che può aumentare o ridurre gli importi entro i limiti di legge."
+            )
+
+        totale_spese = (
+            spese_vive_val + ctu_val + custode_val + delegato_val
+            + pubblicita_val + spese_legali_nostre_val
+        )
         st.session_state["spese_future"] = totale_spese
 
         voci_spese = {
             "Spese vive (CU, trascrizioni, ecc.)": spese_vive_val,
             "CTU (perizia di stima)": ctu_val,
-            "Custode / Professionista delegato": custode_val,
+            "Compenso Custode (D.M. 80/2009)": custode_val,
+            "Compenso Delegato (D.M. 227/2015)": delegato_val,
             "Pubblicità asta (PVP)": pubblicita_val,
             "Nostre spese legali": spese_legali_nostre_val,
         }

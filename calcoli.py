@@ -52,6 +52,36 @@ COSTI_ACQUISIZIONE = {
     "advisors": 10000.0,
 }
 
+# ----------------------------------------------------------
+# Parametri per il calcolo dei compensi professionali
+# (Custode giudiziario e Delegato alla vendita)
+# ----------------------------------------------------------
+
+# Aliquote fiscali comuni ai due compensi
+SPESE_GENERALI_PERC = 0.10       # spese generali forfettarie
+CASSA_PREVIDENZA_PERC = 0.04     # cassa di previdenza (su compenso + spese gen.)
+IVA_PERC = 0.22                  # IVA
+
+# --- Custode giudiziario (D.M. 80/2009), scaglioni CUMULATIVI ---
+# (limite_superiore, aliquota) — l'ultimo scaglione ha limite infinito.
+SCAGLIONI_CUSTODE = [
+    (25000.0, 0.03),        # fino a 25.000 €: 3%
+    (100000.0, 0.015),      # da 25.001 a 100.000 €: 1,5%
+    (500000.0, 0.01),       # da 100.001 a 500.000 €: 1%
+    (float("inf"), 0.003),  # oltre 500.000 €: 0,3%
+]
+MAGGIORAZIONE_CUSTODE_DEFAULT = 0.20  # indennità liberazione / difficoltà
+
+# --- Delegato alla vendita (D.M. 227/2015), compenso PER FASE ---
+# Il compenso è un importo fisso per ciascuna delle 4 fasi, che dipende
+# dallo scaglione in cui ricade il prezzo di aggiudicazione.
+FASI_DELEGATO = [
+    "Attività preliminari",
+    "Aggiudicazione/assegnazione",
+    "Trasferimento proprietà",
+    "Distribuzione",
+]
+
 # ==========================================================
 # 2. FUNZIONI DI UTILITÀ TEMPORALE
 # ==========================================================
@@ -485,3 +515,127 @@ def stima_spese_esecutive(tipo_procedura, valore_bene):
 
     totale = sum(voci.values())
     return voci, totale
+
+
+# ==========================================================
+# 6b. COMPENSI PROFESSIONALI (Custode e Delegato alla vendita)
+# ==========================================================
+
+def _applica_spese_cassa_iva(compenso_netto):
+    """
+    Applica a un compenso netto professionale, nell'ordine:
+      + 10% spese generali forfettarie
+      +  4% cassa di previdenza (su compenso + spese generali)
+      + 22% IVA (sull'imponibile = compenso + spese gen. + cassa)
+
+    Ritorna un dict con le singole voci e il totale documento.
+    """
+    spese_generali = compenso_netto * SPESE_GENERALI_PERC
+    imponibile_pre_cassa = compenso_netto + spese_generali
+    cassa = imponibile_pre_cassa * CASSA_PREVIDENZA_PERC
+    imponibile = imponibile_pre_cassa + cassa
+    iva = imponibile * IVA_PERC
+    totale = imponibile + iva
+    return {
+        "spese_generali": spese_generali,
+        "cassa": cassa,
+        "imponibile": imponibile,
+        "iva": iva,
+        "totale": totale,
+    }
+
+
+def calcola_compenso_custode(valore_aggiudicazione,
+                             maggiorazione=MAGGIORAZIONE_CUSTODE_DEFAULT):
+    """
+    Compenso del Custode giudiziario ex D.M. 80/2009.
+
+    Scaglioni CUMULATIVI sul valore di aggiudicazione:
+      - fino a 25.000 €:            3%
+      - da 25.001 a 100.000 €:      1,5%
+      - da 100.001 a 500.000 €:     1%
+      - oltre 500.000 €:            0,3%
+
+    Poi:
+      + maggiorazione (default 20%) per indennità di liberazione /
+        difficoltà eccezionali, applicata al compenso a scaglioni;
+      + 10% spese generali, + 4% cassa, + 22% IVA (via helper comune).
+
+    Ritorna un dict con il breakdown completo (per l'expander a schermo).
+    """
+    scaglioni_dett = []
+    compenso_scaglioni = 0.0
+    limite_prec = 0.0
+    for limite, aliquota in SCAGLIONI_CUSTODE:
+        if valore_aggiudicazione <= limite_prec:
+            break
+        base_scaglione = min(valore_aggiudicazione, limite) - limite_prec
+        if base_scaglione > 0:
+            importo = base_scaglione * aliquota
+            compenso_scaglioni += importo
+            scaglioni_dett.append({
+                "da": limite_prec,
+                "a": limite,
+                "base": base_scaglione,
+                "aliquota": aliquota,
+                "importo": importo,
+            })
+        limite_prec = limite
+
+    maggiorazione_importo = compenso_scaglioni * maggiorazione
+    compenso_netto = compenso_scaglioni + maggiorazione_importo
+    fisco = _applica_spese_cassa_iva(compenso_netto)
+
+    return {
+        "valore_aggiudicazione": valore_aggiudicazione,
+        "scaglioni": scaglioni_dett,
+        "compenso_scaglioni": compenso_scaglioni,
+        "maggiorazione_perc": maggiorazione,
+        "maggiorazione_importo": maggiorazione_importo,
+        "compenso_netto": compenso_netto,
+        **fisco,
+    }
+
+
+def _compenso_fase_delegato(valore_aggiudicazione):
+    """Importo per singola fase ex D.M. 227/2015 in base allo scaglione."""
+    if valore_aggiudicazione <= 100000.0:
+        return 1000.0
+    elif valore_aggiudicazione <= 500000.0:
+        return 1500.0
+    else:
+        return 2000.0
+
+
+def calcola_compenso_delegato(valore_aggiudicazione):
+    """
+    Compenso del Delegato alla vendita ex D.M. 227/2015 (beni immobili).
+
+    Il compenso si articola in 4 fasi (attività preliminari, aggiudicazione,
+    trasferimento, distribuzione). Ogni fase vale un importo fisso a seconda
+    dello scaglione del prezzo di aggiudicazione:
+      - fino a 100.000 €:        1.000 € / fase  (4.000 € totali)
+      - da 100.001 a 500.000 €:  1.500 € / fase  (6.000 € totali)
+      - oltre 500.000 €:         2.000 € / fase  (8.000 € totali)
+
+    Poi: + 10% spese generali, + 4% cassa, + 22% IVA (helper comune).
+
+    Benchmark D.M. 227/2015 (allegato di riferimento): valore 200.000 € →
+    compenso tabellare 6.000 €, totale documento 8.374,08 €.
+
+    Ritorna un dict con il breakdown completo (per l'expander a schermo).
+    """
+    compenso_fase = _compenso_fase_delegato(valore_aggiudicazione)
+    fasi_dett = [
+        {"nome": nome, "importo": compenso_fase} for nome in FASI_DELEGATO
+    ]
+    compenso_netto = compenso_fase * len(FASI_DELEGATO)
+    fisco = _applica_spese_cassa_iva(compenso_netto)
+
+    return {
+        "valore_aggiudicazione": valore_aggiudicazione,
+        "compenso_fase": compenso_fase,
+        "fasi": fasi_dett,
+        "compenso_netto": compenso_netto,
+        **fisco,
+    }
