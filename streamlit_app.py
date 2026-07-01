@@ -40,7 +40,7 @@ st.set_page_config(
 
 # Logo Resolve in alto nella sidebar (nativo Streamlit)
 if _ha_logo:
-    st.logo(LOGO_PATH, icon_image=LOGO_PATH)
+    st.logo(LOGO_PATH, icon_image=LOGO_PATH, size="large")
 
 # ---- Palette di brand (dark navy + oro dal logo Resolve) ----
 NAVY = "#1A2744"
@@ -52,6 +52,11 @@ CREMA = "#ECE7DA"
 # ---- Stile dark: tab, titoli serif, accenti oro ----
 st.markdown(f"""
     <style>
+    /* Logo più grande in cima alla sidebar */
+    img[data-testid="stLogo"] {{
+        height: 4.2rem;
+        max-height: 4.2rem;
+    }}
     /* Titoli in serif per echeggiare il wordmark REsolve */
     h1, h2, h3 {{
         font-family: Georgia, 'Times New Roman', serif !important;
