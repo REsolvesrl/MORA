@@ -766,11 +766,13 @@ def render(ctx):
         v = risultato["voci_2855"]
 
         # ---- Grafici brandizzati (dark): donut ipo/chiro + barra 4 voci ----
-        _NAVY = "#1A2744"
-        _ORO = "#C9A96A"
-        _NAVY_CHIARO = "#5E77A8"
-        _ORO_CHIARO = "#E0CDA3"
+        # Palette scelta per risaltare sul fondo navy scuro:
+        #  - IPOTECARIO → toni ORO   - CHIROGRAFARIO → toni AZZURRO
         _CREMA = "#ECE7DA"
+        _ORO = "#C9A96A"          # oro (ipotecario)
+        _ORO_CHIARO = "#E6D3A6"   # oro chiaro (ipotecario, 2ª voce)
+        _BLU = "#6E8FC7"          # azzurro (chirografario)
+        _BLU_CHIARO = "#9DB4DD"   # azzurro chiaro (chirografario, 2ª voce)
 
         g1, g2 = st.columns([1, 1.3])
 
@@ -779,8 +781,8 @@ def render(ctx):
                 labels=["Ipotecario", "Chirografario"],
                 values=[risultato["ipotecario"], risultato["chirografario"]],
                 hole=0.62,
-                marker=dict(colors=[_NAVY, _ORO],
-                            line=dict(color="#FFFFFF", width=2)),
+                marker=dict(colors=[_ORO, _BLU],
+                            line=dict(color="#1A2744", width=2)),
                 textinfo="percent",
                 textfont=dict(size=15, color="#FFFFFF"),
                 hovertemplate="%{label}: %{value:,.0f} €<extra></extra>",
@@ -806,15 +808,16 @@ def render(ctx):
         with g2:
             fig_bar = go.Figure()
             _voci_bar = [
-                ("Pre-triennio · chiro", v["pre_chiro"], _ORO_CHIARO),
-                ("Triennio · ipo (mora)", v["triennio_ipo"], _NAVY),
-                ("Post · ipo (legale)", v["post_ipo"], _NAVY_CHIARO),
-                ("Post · chiro (eccedenza)", v["post_chiro"], _ORO),
+                ("Pre-triennio · chiro", v["pre_chiro"], _BLU_CHIARO),
+                ("Triennio · ipo (mora)", v["triennio_ipo"], _ORO),
+                ("Post · ipo (legale)", v["post_ipo"], _ORO_CHIARO),
+                ("Post · chiro (eccedenza)", v["post_chiro"], _BLU),
             ]
             for nome, val, col in _voci_bar:
                 fig_bar.add_trace(go.Bar(
                     y=["Composizione"], x=[val], name=nome, orientation="h",
-                    marker=dict(color=col),
+                    marker=dict(color=col,
+                                line=dict(color="#1A2744", width=1.5)),
                     hovertemplate=f"{nome}: %{{x:,.0f}} €<extra></extra>",
                 ))
             fig_bar.update_layout(

@@ -248,7 +248,7 @@ def render(ctx):
         y=utili_sim,
         mode="lines",
         name="Utile Lordo",
-        line=dict(color="#1f77b4", width=3),
+        line=dict(color="#6E8FC7", width=3),
         customdata=roe_sim,
         hovertemplate=(
             "Offerta: %{x:,.0f} €<br>"
@@ -263,7 +263,7 @@ def render(ctx):
         y=[utile_lordo],
         mode="markers",
         name="Offerta Target",
-        marker=dict(color="#ff4b4b", size=16, symbol="star",
+        marker=dict(color="#C9A96A", size=16, symbol="star",
                     line=dict(color="white", width=1.5)),
         hovertemplate=(
             "🎯 OFFERTA TARGET<br>"
@@ -276,10 +276,10 @@ def render(ctx):
     # Linee tratteggiate di proiezione sugli assi
     fig.add_shape(type="line", x0=offerta_target, x1=offerta_target,
                   y0=0, y1=utile_lordo,
-                  line=dict(color="#ff4b4b", width=1.5, dash="dash"))
+                  line=dict(color="#C9A96A", width=1.5, dash="dash"))
     fig.add_shape(type="line", x0=0, x1=offerta_target,
                   y0=utile_lordo, y1=utile_lordo,
-                  line=dict(color="#ff4b4b", width=1.5, dash="dash"))
+                  line=dict(color="#C9A96A", width=1.5, dash="dash"))
 
     # Annotation con il ROE atteso collegata al punto target
     fig.add_annotation(
@@ -288,11 +288,11 @@ def render(ctx):
               f"{fmt_eur(offerta_target, 0)}<br>"
               f"<b>ROE Atteso: {fmt_pct(roe)}</b>"),
         showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2,
-        arrowcolor="#ff4b4b",
+        arrowcolor="#C9A96A",
         ax=60, ay=-60,
         bgcolor="rgba(255,75,75,0.12)",
-        bordercolor="#ff4b4b", borderwidth=1.5, borderpad=8,
-        font=dict(size=13, color="#ff4b4b"),
+        bordercolor="#C9A96A", borderwidth=1.5, borderpad=8,
+        font=dict(size=13, color="#C9A96A"),
     )
 
     fig.update_layout(
