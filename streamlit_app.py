@@ -42,29 +42,31 @@ st.set_page_config(
 if _ha_logo:
     st.logo(LOGO_PATH, icon_image=LOGO_PATH)
 
-# ---- Palette di brand (navy + oro dal logo Resolve) ----
+# ---- Palette di brand (dark navy + oro dal logo Resolve) ----
 NAVY = "#1A2744"
+NAVY_CARD = "#243459"
 ORO = "#C9A96A"
 ORO_SCURO = "#B08F4F"
+CREMA = "#ECE7DA"
 
-# ---- Stile: tab, titoli serif, accenti brand ----
+# ---- Stile dark: tab, titoli serif, accenti oro ----
 st.markdown(f"""
     <style>
     /* Titoli in serif per echeggiare il wordmark REsolve */
     h1, h2, h3 {{
         font-family: Georgia, 'Times New Roman', serif !important;
-        color: {NAVY};
+        color: {CREMA};
         letter-spacing: 0.2px;
     }}
-    /* Tab più grandi e con accento oro sulla scheda attiva */
+    /* Tab più grandi con scheda attiva in oro */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 12px;
     }}
     .stTabs [data-baseweb="tab"] {{
         height: 55px;
         padding: 0px 28px;
-        background-color: rgba(26, 39, 68, 0.06);
-        border: 1px solid rgba(26, 39, 68, 0.18);
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(201, 169, 106, 0.30);
         border-radius: 10px 10px 0px 0px;
         font-size: 18px;
         font-weight: 600;
@@ -75,21 +77,21 @@ st.markdown(f"""
         color: inherit;
     }}
     .stTabs [aria-selected="true"] {{
-        background-color: {NAVY};
-        color: white !important;
-        border: 1px solid {NAVY};
-        border-bottom: 3px solid {ORO};
+        background-color: {ORO};
+        color: {NAVY} !important;
+        border: 1px solid {ORO};
     }}
-    /* Bottone primario in navy con testo chiaro */
+    /* Bottoni primari / download in oro con testo navy */
     .stButton > button[kind="primary"], .stDownloadButton > button {{
-        background-color: {NAVY};
-        border: 1px solid {NAVY};
-        color: #FFFFFF;
+        background-color: {ORO};
+        border: 1px solid {ORO};
+        color: {NAVY};
+        font-weight: 600;
     }}
     .stButton > button[kind="primary"]:hover, .stDownloadButton > button:hover {{
         background-color: {ORO_SCURO};
         border-color: {ORO_SCURO};
-        color: #FFFFFF;
+        color: {NAVY};
     }}
     </style>
 """, unsafe_allow_html=True)

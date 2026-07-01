@@ -302,10 +302,13 @@ def render(ctx):
         # separators: 1° char = separatore decimali, 2° char = separatore migliaia
         # ",." → 1.234,56 (formato italiano)
         separators=",.",
-        xaxis=dict(tickformat=",.0f", ticksuffix=" €"),
-        yaxis=dict(tickformat=",.0f", ticksuffix=" €"),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#ECE7DA"),
+        xaxis=dict(tickformat=",.0f", ticksuffix=" €", color="#ECE7DA",
+                   gridcolor="rgba(236,231,218,0.12)"),
+        yaxis=dict(tickformat=",.0f", ticksuffix=" €", color="#ECE7DA",
+                   gridcolor="rgba(236,231,218,0.12)"),
         hovermode="closest",
-        template="plotly_white",
         height=480,
         margin=dict(l=20, r=20, t=60, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,

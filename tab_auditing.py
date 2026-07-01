@@ -765,11 +765,12 @@ def render(ctx):
 
         v = risultato["voci_2855"]
 
-        # ---- Grafici brandizzati: donut ipo/chiro + barra 4 voci ----
+        # ---- Grafici brandizzati (dark): donut ipo/chiro + barra 4 voci ----
         _NAVY = "#1A2744"
         _ORO = "#C9A96A"
-        _NAVY_CHIARO = "#3E5583"
+        _NAVY_CHIARO = "#5E77A8"
         _ORO_CHIARO = "#E0CDA3"
+        _CREMA = "#ECE7DA"
 
         g1, g2 = st.columns([1, 1.3])
 
@@ -788,13 +789,15 @@ def render(ctx):
             fig_donut.update_layout(
                 title=dict(text="Ipotecario vs Chirografario", font=dict(size=15)),
                 separators=",.",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color=_CREMA),
                 showlegend=True,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.15,
                             xanchor="center", x=0.5),
                 height=300, margin=dict(l=10, r=10, t=45, b=10),
                 annotations=[dict(
                     text=f"<b>{fmt_eur(totale_gen, 0)}</b>",
-                    x=0.5, y=0.5, font=dict(size=15, color=_NAVY),
+                    x=0.5, y=0.5, font=dict(size=15, color=_CREMA),
                     showarrow=False,
                 )],
             )
@@ -818,7 +821,10 @@ def render(ctx):
                 title=dict(text="Composizione delle 4 voci", font=dict(size=15)),
                 barmode="stack",
                 separators=",.",
-                xaxis=dict(tickformat=",.0f", ticksuffix=" €", showgrid=False),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color=_CREMA),
+                xaxis=dict(tickformat=",.0f", ticksuffix=" €", showgrid=False,
+                           color=_CREMA),
                 yaxis=dict(showticklabels=False),
                 legend=dict(orientation="h", yanchor="bottom", y=-0.4,
                             xanchor="center", x=0.5, font=dict(size=11)),
