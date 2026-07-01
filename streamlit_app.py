@@ -2,6 +2,8 @@ import streamlit as st
 from datetime import date
 import plotly.graph_objects as go
 
+from autofill import estrai_testo_da_pdf, extract_data_from_legal_text
+
 import pandas as pd
 from calcoli import (
     FREQUENZA_MESI,
@@ -40,6 +42,90 @@ def fmt_pct(x, decimali=2):
     """Formatta una frazione decimale come percentuale italiana: 0.085 -> '8,50%'."""
     s = f"{x * 100:.{decimali}f}"
     return f"{s.replace('.', ',')}%"
+
+
+# ==========================================================
+# MAGIC AUTOFILL — mappatura dati estratti → key dei widget
+# ==========================================================
+# Il modulo autofill.py restituisce un dict con chiavi "logiche"
+# (schema stabile). Qui le mappiamo alle key concrete dei widget
+# Streamlit e applichiamo eventuali conversioni (es. 0.08 -> 8.0
+# perché il widget di tasso mostra la percentuale).
+
+def _mappa_autofill_a_widget(dati_estratti):
+    """Da dict dell'autofill → dict {widget_key: valore_pronto_per_widget}."""
+    out = {}
+    d = dati_estratti or {}
+
+    if d.get("tasso_mora") is not None:
+        out["sb_tasso_mora"] = float(d["tasso_mora"]) * 100
+    if d.get("data_stipula") is not None:
+        out["sb_data_stipula"] = d["data_stipula"]
+    if d.get("data_pignoramento") is not None:
+        out["sb_data_pignoramento"] = d["data_pignoramento"]
+
+    if d.get("importo_rata") is not None:
+        out["t1_importo_rata"] = float(d["importo_rata"])
+    if d.get("data_prima_rata_insoluta") is not None:
+        out["t1_data_prima_rata"] = d["data_prima_rata_insoluta"]
+    if d.get("frequenza_rate") is not None:
+        out["t1_frequenza"] = d["frequenza_rate"]
+    if d.get("capitale_residuo") is not None:
+        out["t1_capitale_residuo"] = float(d["capitale_residuo"])
+    if d.get("data_decadenza_effettiva") is not None:
+        out["t1_data_decadenza"] = d["data_decadenza_effettiva"]
+    if d.get("is_caso_A") is not None:
+        out["sb_caso"] = (
+            "CASO A – Lettera DBT" if d["is_caso_A"]
+            else "CASO B – Notifica Precetto"
+        )
+    if d.get("gbv_dichiarato") is not None:
+        out["t1_gbv"] = float(d["gbv_dichiarato"])
+    if d.get("data_attualizzazione_gbv") is not None:
+        out["t1_data_att_gbv"] = d["data_attualizzazione_gbv"]
+
+    # Sezione piano di ammortamento (ricostruzione algoritmica)
+    if d.get("capitale_originario") is not None:
+        out["t1_capitale_originario"] = float(d["capitale_originario"])
+    if d.get("data_erogazione") is not None:
+        out["t1_data_erogazione"] = d["data_erogazione"]
+    if d.get("durata_anni") is not None:
+        out["t1_durata_anni"] = int(d["durata_anni"])
+    if d.get("tan") is not None:
+        out["t1_tan"] = float(d["tan"]) * 100
+
+    return out
+
+
+# Etichette user-friendly per il feedback UI
+_ETICHETTE_CAMPI = {
+    "sb_tasso_mora": "Tasso di mora",
+    "sb_data_stipula": "Data stipula mutuo",
+    "sb_data_pignoramento": "Data pignoramento",
+    "sb_caso": "Modalità (Caso A/B)",
+    "t1_importo_rata": "Importo rata",
+    "t1_data_prima_rata": "Data prima rata insoluta",
+    "t1_frequenza": "Frequenza rate",
+    "t1_capitale_residuo": "Capitale residuo",
+    "t1_data_decadenza": "Data decadenza / precetto",
+    "t1_gbv": "GBV dichiarato",
+    "t1_data_att_gbv": "Data attualizzazione GBV",
+    "t1_capitale_originario": "Capitale originario erogato",
+    "t1_data_erogazione": "Data erogazione mutuo",
+    "t1_durata_anni": "Durata mutuo (anni)",
+    "t1_tan": "TAN mutuo",
+}
+
+
+# --- Applica autofill_pending PRIMA che i widget siano renderizzati ---
+if "autofill_pending" in st.session_state:
+    dati_da_applicare = st.session_state.pop("autofill_pending")
+    campi_compilati = []
+    for widget_key, valore in dati_da_applicare.items():
+        st.session_state[widget_key] = valore
+        campi_compilati.append(_ETICHETTE_CAMPI.get(widget_key, widget_key))
+    st.session_state["autofill_ultimi_campi"] = campi_compilati
+
 
 # ==========================================================
 # 7. INTERFACCIA STREAMLIT
@@ -80,18 +166,134 @@ st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semp
 
 # ---- Sidebar: parametri comuni ----
 with st.sidebar:
+
+    # ==========================================================
+    # ✨ MAGIC AUTOFILL — Estrazione automatica dai PDF legali
+    # ==========================================================
+    with st.expander("✨ Magic Autofill (Precetto / Mutuo / DBT)", expanded=False):
+        st.caption(
+            "Carica i documenti in PDF: il software estrarrà "
+            "automaticamente **capitale**, **tassi**, **date** e li "
+            "userà come default nei campi qui sotto."
+        )
+        pdf_docs = st.file_uploader(
+            "Carica Documenti (Precetto, Mutuo, DBT) per Autocompilazione",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key="autofill_uploader",
+        )
+        # Info privacy sul metodo di estrazione
+        has_llm_key = False
+        try:
+            has_llm_key = "ANTHROPIC_API_KEY" in st.secrets
+        except Exception:
+            pass
+        if not has_llm_key:
+            import os as _os
+            has_llm_key = bool(_os.environ.get("ANTHROPIC_API_KEY"))
+        if has_llm_key:
+            st.caption(
+                "🤖 Modalità **LLM Anthropic (Claude Haiku)** attiva. "
+                "⚠️ Il testo dei PDF verrà inviato ai server Anthropic per "
+                "l'estrazione. Non caricare dati che non vuoi condividere."
+            )
+        else:
+            st.caption(
+                "🔧 Modalità **regex fallback** (nessuna API key configurata). "
+                "Precisione ridotta: funziona su documenti con formulazioni "
+                "standard. Per massima precisione configura "
+                "`ANTHROPIC_API_KEY` in Streamlit secrets."
+            )
+
+        if st.button("🔍 Analizza e Compila", disabled=not pdf_docs):
+            with st.spinner("Estraggo il testo dai PDF..."):
+                testi = []
+                for f in pdf_docs:
+                    try:
+                        t = estrai_testo_da_pdf(f)
+                        if t:
+                            testi.append(f"### DOCUMENTO: {f.name}\n{t}")
+                    except Exception as e:
+                        st.warning(f"⚠️ Errore lettura {f.name}: {e}")
+                testo_completo = "\n\n".join(testi)
+
+            if not testo_completo.strip():
+                st.error(
+                    "⛔ Nessun testo estratto. I PDF potrebbero essere "
+                    "scansionati (serve OCR)."
+                )
+            else:
+                with st.spinner("Estraggo i dati con l'AI..."):
+                    try:
+                        secrets_obj = None
+                        try:
+                            secrets_obj = st.secrets
+                        except Exception:
+                            pass
+                        dati_estratti, modalita = extract_data_from_legal_text(
+                            testo_completo, streamlit_secrets=secrets_obj,
+                        )
+                    except Exception as e:
+                        st.error(f"⛔ Estrazione fallita: {e}")
+                        dati_estratti, modalita = {}, "errore"
+
+                if dati_estratti:
+                    widget_updates = _mappa_autofill_a_widget(dati_estratti)
+                    non_trovati = [
+                        k for k, v in dati_estratti.items() if v is None
+                    ]
+                    if widget_updates:
+                        st.session_state["autofill_pending"] = widget_updates
+                        st.success(
+                            f"✅ **{len(widget_updates)} campi** compilati "
+                            f"(modalità: `{modalita}`). Aggiorno l'interfaccia…"
+                        )
+                        st.toast(
+                            f"Autofill: {len(widget_updates)} campi "
+                            "compilati",
+                            icon="✨",
+                        )
+                        st.rerun()
+                    else:
+                        st.warning(
+                            "⚠️ Nessun campo estraibile dai documenti. "
+                            "Compila manualmente."
+                        )
+
+    # --- Feedback post-autofill ---
+    if "autofill_ultimi_campi" in st.session_state:
+        campi = st.session_state.pop("autofill_ultimi_campi")
+        st.success(
+            "🎯 **Campi compilati automaticamente:**\n\n"
+            + "\n".join(f"- {c}" for c in campi)
+            + "\n\nVerifica i valori e correggi manualmente se necessario."
+        )
+
     st.header("Parametri generali")
-    tasso_mora = st.number_input("Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1) / 100
+    tasso_mora = st.number_input(
+        "Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1,
+        key="sb_tasso_mora",
+    ) / 100
 
     st.divider()
     st.subheader("Date comuni")
-    data_stipula = st.date_input("Data stipula mutuo", value=date(2018, 6, 15),
-                                 min_value=date(2000, 1, 1),
-                                 format="DD/MM/YYYY")
-    data_pignoramento = st.date_input("Data pignoramento", value=date(2023, 9, 10),
-                                      format="DD/MM/YYYY")
-    data_fine = st.date_input("Data di aggiudicazione (attualizzazione desiderata)", value=date.today(),
-                              format="DD/MM/YYYY")
+    data_stipula = st.date_input(
+        "Data stipula mutuo",
+        value=date(2018, 6, 15),
+        min_value=date(2000, 1, 1),
+        format="DD/MM/YYYY",
+        key="sb_data_stipula",
+    )
+    data_pignoramento = st.date_input(
+        "Data pignoramento", value=date(2023, 9, 10),
+        format="DD/MM/YYYY",
+        key="sb_data_pignoramento",
+    )
+    data_fine = st.date_input(
+        "Data di aggiudicazione (attualizzazione desiderata)",
+        value=date.today(), format="DD/MM/YYYY",
+        key="sb_data_fine",
+    )
 
     st.divider()
     st.subheader("Evento di decadenza")
@@ -99,6 +301,7 @@ with st.sidebar:
         "Quale atto ha generato la decadenza dal beneficio del termine?",
         options=["CASO A – Lettera DBT", "CASO B – Notifica Precetto"],
         index=0,
+        key="sb_caso",
     )
     is_caso_A = caso.startswith("CASO A")
 
@@ -136,13 +339,19 @@ with tab1:
         min_value=0.0,
         value=800.0,
         step=50.0,
-        help="Inserire l'intero importo della rata scaduta (Quota Capitale + Quota Interessi)"
+        help="Inserire l'intero importo della rata scaduta (Quota Capitale + Quota Interessi)",
+        key="t1_importo_rata",
     )
-    data_prima_rata = c2.date_input("Data scadenza PRIMA rata insoluta",
-                                    value=date(2021, 3, 1),
-                                    format="DD/MM/YYYY")
-    frequenza = c3.selectbox("Frequenza rate",
-                             options=list(FREQUENZA_MESI.keys()), index=0)
+    data_prima_rata = c2.date_input(
+        "Data scadenza PRIMA rata insoluta",
+        value=date(2021, 3, 1), format="DD/MM/YYYY",
+        key="t1_data_prima_rata",
+    )
+    frequenza = c3.selectbox(
+        "Frequenza rate",
+        options=list(FREQUENZA_MESI.keys()), index=0,
+        key="t1_frequenza",
+    )
 
     c4, c5 = st.columns(2)
     capitale_residuo = c4.number_input(
@@ -153,23 +362,29 @@ with tab1:
         help="Intero capitale esigibile alla data di decadenza/precetto. "
              "Su questo importo decorre la mora dalla decadenza in poi. "
              "Le rate insolute pre-decadenza contribuiscono SOLO con i loro interessi. "
-             "Verificare piano di ammortamento."
+             "Verificare piano di ammortamento.",
+        key="t1_capitale_residuo",
     )
 
-    # ---- Campo dinamico in base al caso ----
+    # ---- Campo Data decadenza / precetto (key unica, label dinamica) ----
+    # Default: se non c'è già un valore in session_state, usa quello adatto al caso
+    if "t1_data_decadenza" not in st.session_state:
+        st.session_state["t1_data_decadenza"] = (
+            date(2022, 1, 20) if is_caso_A else date(2023, 2, 1)
+        )
     if is_caso_A:
         data_decadenza_effettiva = c5.date_input(
             "📩 Data Lettera DBT",
-            value=date(2022, 1, 20),
             format="DD/MM/YYYY",
-            help="Data della comunicazione di decadenza dal beneficio del termine."
+            help="Data della comunicazione di decadenza dal beneficio del termine.",
+            key="t1_data_decadenza",
         )
     else:
         data_decadenza_effettiva = c5.date_input(
             "📜 Data Notifica Precetto",
-            value=date(2023, 2, 1),
             format="DD/MM/YYYY",
-            help="In assenza di DBT, la decadenza decorre dalla notifica del precetto."
+            help="In assenza di DBT, la decadenza decorre dalla notifica del precetto.",
+            key="t1_data_decadenza",
         )
 
     # ---- GBV dichiarato + voci secondarie ----
@@ -180,7 +395,8 @@ with tab1:
         step=1000.0,
         help="Importo complessivo (Gross Book Value) richiesto dalla banca/cedente. "
              "Funziona sia per CASO A (Lettera DBT) sia per CASO B (Notifica Precetto). "
-             "Lascia 0 per saltare il check di congruità."
+             "Lascia 0 per saltare il check di congruità.",
+        key="t1_gbv",
     )
 
     # 🆕 Data di attualizzazione del GBV (appare solo se GBV > 0)
@@ -194,9 +410,10 @@ with tab1:
             date(2022, 11, 6) if is_caso_A else data_decadenza_effettiva
         )
         atto_nome = "Lettera DBT" if is_caso_A else "Notifica Precetto"
+        if "t1_data_att_gbv" not in st.session_state:
+            st.session_state["t1_data_att_gbv"] = default_attualizzazione
         data_attualizzazione_gbv = st.date_input(
             "📅 Data del conteggio del creditore (attualizzazione del GBV)",
-            value=default_attualizzazione,
             format="DD/MM/YYYY",
             help=(
                 "⚠️ FONDAMENTALE: data fino a cui il creditore ha conteggiato "
@@ -208,7 +425,8 @@ with tab1:
                 "'alla pari' col nostro calcolo, evitando falsi positivi "
                 "dovuti al disallineamento temporale tra il GBV dichiarato "
                 "e la data di aggiudicazione finale."
-            )
+            ),
+            key="t1_data_att_gbv",
         )
     else:
         data_attualizzazione_gbv = None
@@ -252,22 +470,26 @@ with tab1:
 
     # ---------- MODO B: Ricostruzione algoritmica ----------
     if modalita_piano.startswith("🧮"):
+        if "t1_data_erogazione" not in st.session_state:
+            st.session_state["t1_data_erogazione"] = data_stipula
         m1, m2, m3 = st.columns(3)
         capitale_originario = m1.number_input(
             "💶 Capitale Originario Erogato (€)",
             min_value=0.0, value=200000.0, step=1000.0,
-            help="Importo del mutuo come da contratto / atto notarile."
+            help="Importo del mutuo come da contratto / atto notarile.",
+            key="t1_capitale_originario",
         )
         data_erogazione = m2.date_input(
             "📅 Data di Erogazione (inizio mutuo)",
-            value=data_stipula,
             format="DD/MM/YYYY",
             help="Di norma coincide con la Data di stipula. Modificare se "
-                 "l'erogazione è avvenuta in data diversa."
+                 "l'erogazione è avvenuta in data diversa.",
+            key="t1_data_erogazione",
         )
         durata_anni = m3.number_input(
             "⏳ Durata del mutuo (anni)",
             min_value=1, max_value=50, value=20, step=1,
+            key="t1_durata_anni",
         )
         m4, m5 = st.columns(2)
         tan = m4.number_input(
@@ -276,12 +498,14 @@ with tab1:
             help="Tasso Annuo Nominale del mutuo originario (diverso dal "
                  "tasso di mora). Sarà usato per calcolare la rata costante "
                  "e la ripartizione capitale/interessi rata per rata.",
+            key="t1_tan",
         ) / 100
         freq_piano = m5.selectbox(
             "Frequenza rate (piano di ammortamento)",
             options=list(FREQUENZA_MESI.keys()), index=0,
             help="Di norma uguale alla 'Frequenza rate' del piano "
-                 "originario. Modificare se diversa."
+                 "originario. Modificare se diversa.",
+            key="t1_freq_piano",
         )
 
         try:
