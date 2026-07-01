@@ -573,7 +573,7 @@ with tab1:
             sched_edit = st.data_editor(
                 default_sched,
                 num_rows="dynamic",
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "Da": st.column_config.DateColumn(
                         "Da", format="DD/MM/YYYY", required=True
@@ -764,7 +764,7 @@ with tab1:
             ])
             st.dataframe(
                 df_piano,
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
                 column_config={
                     "Quota_Interessi": st.column_config.NumberColumn(
                         "Quota Interessi (€)", format="%.2f"
@@ -2065,7 +2065,7 @@ with tab3:
                     xanchor="right", x=1),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ==========================================================
     # 📄 EXPORT PDF — Acquisto Credito NPL
