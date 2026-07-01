@@ -137,6 +137,68 @@ def interesse_legale_pro_rata(capitale, data_inizio, data_fine):
         cursore = fine_segmento
     return totale, segmenti
 
+
+# ----------------------------------------------------------
+# Tasso di mora: scalare OPPURE scadenzario (tasso variabile)
+# ----------------------------------------------------------
+
+def _normalizza_scadenzario_mora(tasso_mora):
+    """
+    Normalizza il tasso di mora in una lista ordinata di tuple (da, tasso).
+
+    Accetta:
+      - un numero (float/int): tasso costante → [(date.min, tasso)]
+      - una lista di dict {"da": date, "tasso": float}: scadenzario.
+        Ogni voce vale dalla sua data 'da' (inclusa) fino alla 'da' della
+        voce successiva (esclusa). Per le date anteriori alla prima voce
+        si applica il tasso della prima voce.
+    """
+    if isinstance(tasso_mora, (int, float)):
+        return [(date.min, float(tasso_mora))]
+    voci = [(v["da"], float(v["tasso"])) for v in tasso_mora]
+    if not voci:
+        raise ValueError("Scadenzario tassi di mora vuoto.")
+    voci.sort(key=lambda x: x[0])
+    return voci
+
+
+def _tasso_mora_alla_data(scadenzario, d):
+    """Tasso vigente alla data d (ultima voce con 'da' <= d)."""
+    tasso = scadenzario[0][1]
+    for da, t in scadenzario:
+        if da <= d:
+            tasso = t
+        else:
+            break
+    return tasso
+
+
+def mora_su_periodo(capitale, tasso_mora, data_inizio, data_fine, base_anno=365):
+    """
+    Interesse di mora su [data_inizio, data_fine), con `tasso_mora` che può
+    essere uno scalare (tasso fisso) o uno scadenzario (tasso variabile).
+
+    Se lo scadenzario prevede cambi di tasso all'interno del periodo, il
+    calcolo viene spezzato ad ogni data di cambio e sommato (divisore fisso
+    `base_anno`, coerente col resto del software).
+
+    Con un tasso scalare, il risultato è identico a
+    `interesse_semplice(capitale, tasso_mora, giorni)`.
+    """
+    if data_fine <= data_inizio or capitale <= 0:
+        return 0.0
+    scad = _normalizza_scadenzario_mora(tasso_mora)
+    # Confini di cambio tasso strettamente interni al periodo
+    confini = sorted({da for da, _ in scad if data_inizio < da < data_fine})
+    punti = [data_inizio] + confini + [data_fine]
+    totale = 0.0
+    for i in range(len(punti) - 1):
+        a, b = punti[i], punti[i + 1]
+        gg = giorni_tra(a, b)
+        tasso = _tasso_mora_alla_data(scad, a)
+        totale += interesse_semplice(capitale, tasso, gg, base_anno)
+    return totale
+
 def genera_rate_scadute(importo_rata, data_prima_rata, frequenza, data_limite):
     """
     Auto-genera le date delle rate scadute partendo dalla prima rata
@@ -329,8 +391,7 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     # --- FASE 1 — PRE-TRIENNIO (chirografario @ mora) ---
     if data_inizio_mora < inizio_triennio:
         fine_pre = min(inizio_triennio, data_fine)
-        gg = giorni_tra(data_inizio_mora, fine_pre)
-        int_pre = interesse_semplice(capitale, tasso_mora, gg)
+        int_pre = mora_su_periodo(capitale, tasso_mora, data_inizio_mora, fine_pre)
         risultato["chirografario"] += int_pre
         risultato["dettaglio"]["pre_triennio_chiro"] = int_pre
 
@@ -338,8 +399,7 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
     inizio_t = max(data_inizio_mora, inizio_triennio)
     fine_t = min(fine_triennio, data_fine)
     if fine_t > inizio_t:
-        gg = giorni_tra(inizio_t, fine_t)
-        int_triennio = interesse_semplice(capitale, tasso_mora, gg)
+        int_triennio = mora_su_periodo(capitale, tasso_mora, inizio_t, fine_t)
         risultato["ipotecario"] += int_triennio
         risultato["dettaglio"]["triennio_ipo_mora"] = int_triennio
 
@@ -349,8 +409,7 @@ def ripartisci_credito(capitale, tasso_mora, data_inizio_mora,
         int_legale, segmenti_legale = interesse_legale_pro_rata(
             capitale, inizio_post, data_fine
         )
-        gg = giorni_tra(inizio_post, data_fine)
-        int_mora_post = interesse_semplice(capitale, tasso_mora, gg)
+        int_mora_post = mora_su_periodo(capitale, tasso_mora, inizio_post, data_fine)
 
         risultato["ipotecario"] += int_legale
         risultato["chirografario"] += (int_mora_post - int_legale)

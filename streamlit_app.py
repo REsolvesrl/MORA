@@ -501,6 +501,71 @@ with tab1:
         )
 
     # ==========================================================
+    # 📈 TASSO DI MORA VARIABILE NEL TEMPO (opzionale)
+    # ==========================================================
+    # Se attivo, sostituisce il tasso fisso della sidebar con uno
+    # scadenzario data→tasso (utile per mutui a tasso Euribor-indicizzato,
+    # es. conteggi tipo BASSOTTI/Triple A).
+    tasso_mora_calcolo = tasso_mora   # default: scalare dalla sidebar
+    usa_tasso_variabile = False
+    with st.expander("📈 Tasso di mora variabile nel tempo (opzionale)"):
+        usa_tasso_variabile = st.checkbox(
+            "Attiva scadenzario tassi di mora (sostituisce il tasso fisso "
+            "della sidebar)",
+            value=False,
+            help="Per mutui a tasso variabile (Euribor + spread): inserisci "
+                 "una riga per ogni variazione. Ogni tasso vale dalla sua "
+                 "data 'Da' fino alla data 'Da' della riga successiva.",
+        )
+        if usa_tasso_variabile:
+            st.caption(
+                "Compila la tabella: **Da** = data di decorrenza del tasso, "
+                "**Tasso mora (%)** = tasso annuo in quel periodo. "
+                "Le righe vengono ordinate automaticamente per data."
+            )
+            default_sched = pd.DataFrame([
+                {"Da": date(2022, 1, 1), "Tasso mora (%)": 6.45},
+                {"Da": date(2023, 1, 1), "Tasso mora (%)": 8.66},
+                {"Da": date(2024, 1, 1), "Tasso mora (%)": 10.36},
+            ])
+            sched_edit = st.data_editor(
+                default_sched,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "Da": st.column_config.DateColumn(
+                        "Da", format="DD/MM/YYYY", required=True
+                    ),
+                    "Tasso mora (%)": st.column_config.NumberColumn(
+                        "Tasso mora (%)", min_value=0.0, max_value=30.0,
+                        step=0.01, format="%.4f", required=True
+                    ),
+                },
+                key="t1_scadenzario_mora",
+            )
+            # Costruisco lo scadenzario per il motore (tasso in decimale)
+            scad = []
+            for _, riga in sched_edit.iterrows():
+                d = riga["Da"]
+                tasso = riga["Tasso mora (%)"]
+                if pd.isna(d) or pd.isna(tasso):
+                    continue
+                if hasattr(d, "date"):
+                    d = d.date()
+                scad.append({"da": d, "tasso": float(tasso) / 100.0})
+            if scad:
+                tasso_mora_calcolo = scad
+                st.success(
+                    f"✅ Scadenzario attivo con **{len(scad)} fasce** di tasso. "
+                    "Verrà usato al posto del tasso fisso della sidebar."
+                )
+            else:
+                st.warning(
+                    "⚠️ Scadenzario vuoto o incompleto: verrà usato il tasso "
+                    "fisso della sidebar."
+                )
+
+    # ==========================================================
     # 📐 PIANO DI AMMORTAMENTO (anti-anatocismo)
     # ==========================================================
     st.divider()
@@ -701,15 +766,23 @@ with tab1:
                    f"**{data_decadenza_effettiva.strftime('%d/%m/%Y')}**")
 
         # --- PARAMETRI COMUNI (condivisi da entrambi i giri) ---
+        # tasso_mora_calcolo è lo scalare della sidebar oppure lo
+        # scadenzario (se il tasso variabile è attivo).
         params_comuni = {
             "importo_rata": importo_rata,
             "data_prima_rata": data_prima_rata,
             "frequenza": frequenza,
             "capitale_residuo": capitale_residuo,
-            "tasso_mora": tasso_mora,
+            "tasso_mora": tasso_mora_calcolo,
             "data_decadenza_effettiva": data_decadenza_effettiva,
             "data_pignoramento": data_pignoramento,
         }
+        if usa_tasso_variabile and isinstance(tasso_mora_calcolo, list):
+            st.caption(
+                f"📈 **Tasso di mora variabile** attivo: "
+                f"{len(tasso_mora_calcolo)} fasce di tasso "
+                f"(dal {min(s['da'] for s in tasso_mora_calcolo).strftime('%d/%m/%Y')})."
+            )
 
         # --- GIRO B (Calcolo Attuale): stima del debito a oggi / data_fine ---
         st.caption("⏳ **Giro B** — Debito attuale aggiornato alla data di fine "
@@ -1101,6 +1174,14 @@ with tab1:
 
         with st.expander("🔍 Dettaglio calcoli Art. 2855 c.c."):
             st.markdown("## 📐 Matematica della Tripartizione ex Art. 2855 c.c.")
+
+            if usa_tasso_variabile and isinstance(tasso_mora_calcolo, list):
+                st.warning(
+                    "📈 **Tasso di mora variabile attivo.** Nelle formule "
+                    "seguenti compare il tasso della sidebar solo come "
+                    "riferimento: il calcolo effettivo usa lo scadenzario "
+                    "a fasce (i totali mostrati restano corretti)."
+                )
 
             # --- Box didattico: perché il triennio inizia in quella data ---
             if metodo_triennio == METODO_TRIENNIO_SOLARE:
