@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from datetime import date
 
@@ -27,38 +28,75 @@ if "autofill_pending" in st.session_state:
 # 7. INTERFACCIA STREAMLIT
 # ==========================================================
 
-st.set_page_config(page_title="Calcolo Interessi di Mora", layout="wide")
+# --- Asset di branding (guardia: se manca il file, si prosegue senza) ---
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo_resolve.png")
+_ha_logo = os.path.exists(LOGO_PATH)
 
-# ---- Stile: tab più grandi e visibili (dark/light mode compatibili) ----
-st.markdown("""
+st.set_page_config(
+    page_title="Resolve — Interessi di Mora ex art. 2855 c.c.",
+    page_icon=LOGO_PATH if _ha_logo else "⚖️",
+    layout="wide",
+)
+
+# Logo Resolve in alto nella sidebar (nativo Streamlit)
+if _ha_logo:
+    st.logo(LOGO_PATH, icon_image=LOGO_PATH)
+
+# ---- Palette di brand (navy + oro dal logo Resolve) ----
+NAVY = "#1A2744"
+ORO = "#C9A96A"
+ORO_SCURO = "#B08F4F"
+
+# ---- Stile: tab, titoli serif, accenti brand ----
+st.markdown(f"""
     <style>
-    .stTabs [data-baseweb="tab-list"] {
+    /* Titoli in serif per echeggiare il wordmark REsolve */
+    h1, h2, h3 {{
+        font-family: Georgia, 'Times New Roman', serif !important;
+        color: {NAVY};
+        letter-spacing: 0.2px;
+    }}
+    /* Tab più grandi e con accento oro sulla scheda attiva */
+    .stTabs [data-baseweb="tab-list"] {{
         gap: 12px;
-    }
-    .stTabs [data-baseweb="tab"] {
+    }}
+    .stTabs [data-baseweb="tab"] {{
         height: 55px;
         padding: 0px 28px;
-        background-color: rgba(128, 128, 128, 0.15);
-        border: 1px solid rgba(128, 128, 128, 0.4);
+        background-color: rgba(26, 39, 68, 0.06);
+        border: 1px solid rgba(26, 39, 68, 0.18);
         border-radius: 10px 10px 0px 0px;
         font-size: 18px;
         font-weight: 600;
         color: inherit;
-    }
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: rgba(255, 75, 75, 0.25);
+    }}
+    .stTabs [data-baseweb="tab"]:hover {{
+        background-color: rgba(201, 169, 106, 0.20);
         color: inherit;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #ff4b4b;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background-color: {NAVY};
         color: white !important;
-        border: 1px solid #ff4b4b;
-    }
+        border: 1px solid {NAVY};
+        border-bottom: 3px solid {ORO};
+    }}
+    /* Bottone primario in navy con testo chiaro */
+    .stButton > button[kind="primary"], .stDownloadButton > button {{
+        background-color: {NAVY};
+        border: 1px solid {NAVY};
+        color: #FFFFFF;
+    }}
+    .stButton > button[kind="primary"]:hover, .stDownloadButton > button:hover {{
+        background-color: {ORO_SCURO};
+        border-color: {ORO_SCURO};
+        color: #FFFFFF;
+    }}
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚖️ Calcolo Interessi di Mora – Ipotecario / Chirografario")
-st.caption("Strumento di supporto. Verificare sempre i risultati. Interesse semplice (art. 1283 c.c.).")
+st.title("Interessi di Mora — Ipotecario / Chirografario")
+st.caption("Strumento di supporto Resolve S.r.l. · Verificare sempre i risultati. "
+           "Interesse semplice (art. 1283 c.c.).")
 
 # ---- Sidebar: parametri comuni ----
 with st.sidebar:

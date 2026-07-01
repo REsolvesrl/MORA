@@ -4,6 +4,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 
 from calcoli import (
     FREQUENZA_MESI,
@@ -476,13 +477,13 @@ def render(ctx):
                     anno_civile=anno_civile,
                 )
 
-        # --- Metriche totali generali ---
-        col1, col2 = st.columns(2)
-        col1.metric("🏛️ Credito IPOTECARIO", f"{fmt_eur(risultato['ipotecario'])}")
-        col2.metric("📄 Credito CHIROGRAFARIO", f"{fmt_eur(risultato['chirografario'])}")
-
+        # --- Metriche totali generali (in card con bordo) ---
         totale_gen = risultato['ipotecario'] + risultato['chirografario']
-        st.metric("💰 TOTALE interessi di mora", f"{fmt_eur(totale_gen)}")
+        with st.container(border=True):
+            col1, col2, col3 = st.columns(3)
+            col1.metric("🏛️ Credito IPOTECARIO", f"{fmt_eur(risultato['ipotecario'])}")
+            col2.metric("📄 Credito CHIROGRAFARIO", f"{fmt_eur(risultato['chirografario'])}")
+            col3.metric("💰 TOTALE interessi di mora", f"{fmt_eur(totale_gen)}")
 
         # ==========================================================
         # 📊 DETTAGLIO DEL CALCOLO INTERESSI (didattico — FASE 1 + FASE 2)
@@ -763,6 +764,68 @@ def render(ctx):
         st.subheader("📊 Divisione ex Art. 2855 c.c.")
 
         v = risultato["voci_2855"]
+
+        # ---- Grafici brandizzati: donut ipo/chiro + barra 4 voci ----
+        _NAVY = "#1A2744"
+        _ORO = "#C9A96A"
+        _NAVY_CHIARO = "#3E5583"
+        _ORO_CHIARO = "#E0CDA3"
+
+        g1, g2 = st.columns([1, 1.3])
+
+        with g1:
+            fig_donut = go.Figure(go.Pie(
+                labels=["Ipotecario", "Chirografario"],
+                values=[risultato["ipotecario"], risultato["chirografario"]],
+                hole=0.62,
+                marker=dict(colors=[_NAVY, _ORO],
+                            line=dict(color="#FFFFFF", width=2)),
+                textinfo="percent",
+                textfont=dict(size=15, color="#FFFFFF"),
+                hovertemplate="%{label}: %{value:,.0f} €<extra></extra>",
+                sort=False,
+            ))
+            fig_donut.update_layout(
+                title=dict(text="Ipotecario vs Chirografario", font=dict(size=15)),
+                separators=",.",
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.15,
+                            xanchor="center", x=0.5),
+                height=300, margin=dict(l=10, r=10, t=45, b=10),
+                annotations=[dict(
+                    text=f"<b>{fmt_eur(totale_gen, 0)}</b>",
+                    x=0.5, y=0.5, font=dict(size=15, color=_NAVY),
+                    showarrow=False,
+                )],
+            )
+            st.plotly_chart(fig_donut, width="stretch")
+
+        with g2:
+            fig_bar = go.Figure()
+            _voci_bar = [
+                ("Pre-triennio · chiro", v["pre_chiro"], _ORO_CHIARO),
+                ("Triennio · ipo (mora)", v["triennio_ipo"], _NAVY),
+                ("Post · ipo (legale)", v["post_ipo"], _NAVY_CHIARO),
+                ("Post · chiro (eccedenza)", v["post_chiro"], _ORO),
+            ]
+            for nome, val, col in _voci_bar:
+                fig_bar.add_trace(go.Bar(
+                    y=["Composizione"], x=[val], name=nome, orientation="h",
+                    marker=dict(color=col),
+                    hovertemplate=f"{nome}: %{{x:,.0f}} €<extra></extra>",
+                ))
+            fig_bar.update_layout(
+                title=dict(text="Composizione delle 4 voci", font=dict(size=15)),
+                barmode="stack",
+                separators=",.",
+                xaxis=dict(tickformat=",.0f", ticksuffix=" €", showgrid=False),
+                yaxis=dict(showticklabels=False),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.4,
+                            xanchor="center", x=0.5, font=dict(size=11)),
+                height=300, margin=dict(l=10, r=10, t=45, b=10),
+            )
+            st.plotly_chart(fig_bar, width="stretch")
+
         fase1, fase2, fase3 = st.columns(3)
 
         with fase1:

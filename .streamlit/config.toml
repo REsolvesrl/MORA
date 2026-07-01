@@ -1,0 +1,7 @@
+# Tema Resolve S.r.l. — palette navy + oro (dal logo).
+[theme]
+primaryColor = "#C9A96A"                 # oro champagne: accenti, bottoni, tab attiva
+backgroundColor = "#FFFFFF"              # sfondo principale pulito
+secondaryBackgroundColor = "#F4F1E9"     # crema calda: sidebar e card
+textColor = "#1A2744"                    # navy del brand
+font = "sans serif"                      # corpo leggibile (titoli in serif via CSS)
