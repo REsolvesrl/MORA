@@ -26,26 +26,10 @@ from reportlab.platypus import (
     PageBreak, KeepTogether,
 )
 
-
-# ==========================================================
-# FORMATTATORI (duplicati locali da streamlit_app per disaccoppiamento)
-# ==========================================================
-
-def _fmt_eur(x, decimali=2):
-    s = f"{x:,.{decimali}f}"
-    s = s.replace(",", "§").replace(".", ",").replace("§", ".")
-    return f"{s} €"
-
-
-def _fmt_pct(x, decimali=2):
-    s = f"{x * 100:.{decimali}f}"
-    return f"{s.replace('.', ',')}%"
-
-
-def _fmt_data(d):
-    if isinstance(d, (date, datetime)):
-        return d.strftime("%d/%m/%Y")
-    return str(d)
+# Formattatori condivisi (alias interni per non toccare le chiamate esistenti)
+from formatters import fmt_eur as _fmt_eur
+from formatters import fmt_pct as _fmt_pct
+from formatters import fmt_data as _fmt_data
 
 
 # ==========================================================

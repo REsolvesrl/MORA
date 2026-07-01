@@ -3,6 +3,7 @@ from datetime import date
 import plotly.graph_objects as go
 
 from autofill import estrai_testo_da_pdf, extract_data_from_legal_text
+from formatters import fmt_eur, fmt_pct, fmt_data
 
 import pandas as pd
 from calcoli import (
@@ -25,28 +26,6 @@ from pdf_export import (
     genera_report_pdf_spese,
     genera_report_pdf_npl,
 )
-
-# ==========================================================
-# FORMATTAZIONE NUMERICA IN STILE ITALIANO
-# ==========================================================
-# I calcoli interni usano sempre float puri (precisione massima).
-# Queste funzioni sono usate solo per il rendering a schermo.
-
-def fmt_eur(x, decimali=2):
-    """Formatta un float come importo in euro stile italiano: '1.234,56 €'.
-
-    Esempio: 1234.56 -> '1.234,56 €' ; 150000.5 -> '150.000,50 €'.
-    """
-    s = f"{x:,.{decimali}f}"                     # '1,234.56' (stile US)
-    s = s.replace(",", "§").replace(".", ",").replace("§", ".")
-    return f"{s} €"
-
-
-def fmt_pct(x, decimali=2):
-    """Formatta una frazione decimale come percentuale italiana: 0.085 -> '8,50%'."""
-    s = f"{x * 100:.{decimali}f}"
-    return f"{s.replace('.', ',')}%"
-
 
 # ==========================================================
 # MAGIC AUTOFILL — mappatura dati estratti → key dei widget
@@ -129,6 +108,24 @@ if "autofill_pending" in st.session_state:
         st.session_state[widget_key] = valore
         campi_compilati.append(_ETICHETTE_CAMPI.get(widget_key, widget_key))
     st.session_state["autofill_ultimi_campi"] = campi_compilati
+
+
+def _valori_esempio():
+    """Caso realistico e coerente per la demo (precompila i campi principali)."""
+    return {
+        "sb_tasso_mora": 5.70,
+        "sb_data_stipula": date(2018, 6, 15),
+        "sb_data_pignoramento": date(2023, 9, 10),
+        "sb_data_fine": date(2024, 6, 30),
+        "sb_caso": "CASO A – Lettera DBT",
+        "sb_metodo_triennio": "Anno solare (prassi conteggi reali)",
+        "t1_importo_rata": 800.0,
+        "t1_data_prima_rata": date(2021, 3, 1),
+        "t1_frequenza": "Mensile",
+        "t1_capitale_residuo": 100000.0,
+        "t1_data_decadenza": date(2022, 1, 20),
+        "t1_gbv": 0.0,
+    }
 
 
 # ==========================================================
@@ -379,11 +376,25 @@ with st.sidebar:
     )
 
 # ==========================================================
+# BARRA DI STATO / GUIDA (ordine consigliato d'uso)
+# ==========================================================
+_ok1 = st.session_state.get("debito_totale", 0.0) > 0
+_ok2 = st.session_state.get("spese_future", 0.0) > 0
+_ico1 = "✅" if _ok1 else "1️⃣"
+_ico2 = "✅" if _ok2 else "2️⃣"
+_ico3 = "✅" if (_ok1 and _ok2) else "3️⃣"
+st.caption(
+    f"**Percorso consigliato:**  {_ico1} Auditing (calcola il debito)  →  "
+    f"{_ico2} Spese Esecutive  →  {_ico3} Acquisto NPL "
+    f"(usa i dati dei primi due)."
+)
+
+# ==========================================================
 # TAB PRINCIPALI
 # ==========================================================
 tab1, tab2, tab3 = st.tabs([
-    "📊 Auditing e Check GBV",
-    "🔮 Previsione Spese Esecutive",
+    f"{'✅' if _ok1 else '📊'} Auditing e Check GBV",
+    f"{'✅' if _ok2 else '🔮'} Previsione Spese Esecutive",
     "🤝 Acquisto Credito e DPO",
 ])
 
@@ -391,7 +402,18 @@ tab1, tab2, tab3 = st.tabs([
 # TAB 1 — AUDITING E CHECK GBV
 # ----------------------------------------------------------
 with tab1:
-    st.subheader("📋 Dati del piano e del credito")
+    intro_col, ex_col = st.columns([3, 1])
+    with intro_col:
+        st.subheader("📋 Dati del piano e del credito")
+    with ex_col:
+        if st.button("📋 Carica esempio", help="Precompila un caso "
+                     "realistico completo per capire come funziona l'app."):
+            st.session_state["autofill_pending"] = _valori_esempio()
+            st.session_state["mostra_risultati"] = True
+            st.toast("Esempio caricato: premi 'Calcola' o guarda i risultati.",
+                     icon="📋")
+            st.rerun()
+
     c1, c2, c3 = st.columns(3)
     importo_rata = c1.number_input(
         "Importo singola rata (€)",
@@ -745,20 +767,28 @@ with tab1:
 
     st.divider()
 
+    # Il bottone rivela i risultati; da lì in poi si ricalcolano ad ogni
+    # interazione (reattivo) senza sparire. Il calcolo è ~0,2ms e il PDF
+    # ~18ms, quindi nessun lag percepibile.
     if st.button("🧮 Calcola interessi di mora", type="primary"):
+        st.session_state["mostra_risultati"] = True
 
-        # --- Controlli di coerenza temporale ---
+    # --- Controlli di coerenza temporale (non bloccano gli altri tab) ---
+    _dati_validi = True
+    if st.session_state.get("mostra_risultati"):
         if data_decadenza_effettiva < data_prima_rata:
             st.error("⛔ La data di decadenza è precedente alla prima rata insoluta. "
                      "Verificare le date.")
-            st.stop()
-        if data_fine < data_decadenza_effettiva:
+            _dati_validi = False
+        elif data_fine < data_decadenza_effettiva:
             st.error("⛔ La data finale di calcolo è precedente alla decadenza. "
                      "Verificare le date.")
-            st.stop()
+            _dati_validi = False
         if data_pignoramento < data_decadenza_effettiva:
             st.warning("⚠️ Il pignoramento risulta precedente alla decadenza: "
                        "di norma è successivo. Verificare.")
+
+    if st.session_state.get("mostra_risultati") and _dati_validi:
 
         etichetta = "CASO A (Lettera DBT)" if is_caso_A else "CASO B (Notifica Precetto)"
         st.subheader(f"Modalità: {etichetta}")
@@ -1732,12 +1762,21 @@ with tab3:
         gbv_base = debito
         fonte_gbv = "Debito calcolato a oggi (Tab 1) — nessun GBV dichiarato inserito"
 
+    # Stato delle dipendenze (guida passo-passo)
+    stato_t1 = "✅ completato" if debito > 0 else "⬜ da fare"
+    stato_t2 = "✅ completato" if spese_procedura > 0 else "⬜ da fare"
+    st.caption(
+        f"Dipendenze: **Tab 1 (Auditing)** {stato_t1}  ·  "
+        f"**Tab 2 (Spese Esecutive)** {stato_t2}"
+    )
+
     if gbv_base <= 0:
         st.info(
-            "⚠️ **Dati non disponibili.** "
-            "Esegui prima il **Tab 1 (Auditing)** e poi il "
-            "**Tab 2 (Previsione Spese Esecutive)** per popolare "
-            "le variabili di calcolo."
+            "⚠️ **Dati non ancora disponibili.**\n\n"
+            "1. Vai nel **Tab 1 (Auditing)**, compila i dati e premi "
+            "**Calcola** (così ottieni il debito).\n"
+            "2. Vai nel **Tab 2 (Previsione Spese Esecutive)** e imposta le voci.\n\n"
+            "Poi torna qui: i valori si popoleranno automaticamente."
         )
         st.stop()
 
