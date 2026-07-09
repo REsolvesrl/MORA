@@ -1250,6 +1250,15 @@ def _render_sofferenza(ctx):
         step=100.0, help="Grado ipotecario ex art. 2855 c.c.")
 
     st.markdown("#### 📅 Date")
+    # Pignoramento e aggiudicazione vengono dalla SIDEBAR (unica fonte,
+    # come per la modalità standard). Qui solo le date specifiche.
+    data_pign = ctx["data_pignoramento"]
+    data_agg = ctx["data_fine"]
+    st.caption(
+        f"📌 **Data pignoramento** ({data_pign.strftime('%d/%m/%Y')}) e "
+        f"**Data di aggiudicazione** ({data_agg.strftime('%d/%m/%Y')}) sono "
+        f"prese dalla **sidebar** (sezione 'Date comuni'). Modificale lì."
+    )
     d1, d2 = st.columns(2)
     data_decorrenza = d1.date_input(
         "Decorrenza interessi", value=date(2021, 11, 1), format="DD/MM/YYYY",
@@ -1260,13 +1269,6 @@ def _render_sofferenza(ctx):
         format="DD/MM/YYYY",
         help="Fino a questa data si applica il tasso legale; da qui in poi "
              "il convenzionale.")
-    d3, d4 = st.columns(2)
-    data_pign = d3.date_input(
-        "Data pignoramento", value=date(2026, 2, 2), format="DD/MM/YYYY",
-        help="Determina l'annata del triennio (anno solare).")
-    data_agg = d4.date_input(
-        "Data aggiudicazione (fine conteggio)", value=date(2026, 12, 31),
-        format="DD/MM/YYYY")
 
     st.markdown("#### 📊 Tassi e opzioni di calcolo")
     t1, t2 = st.columns(2)
