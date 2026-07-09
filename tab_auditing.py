@@ -1356,7 +1356,6 @@ def _render_sofferenza(ctx):
     int_ipo = ipo["triennio_pre_precetto"] + ipo["triennio_post_precetto"]
     post_ipo = ipo["post_triennio_legale"]
     post_chiro = chiro["post_triennio_eccedenza"]
-    post_totale = post_ipo + post_chiro
     int_chiro_cong = chiro["quota_interessi_congelata"] + chiro["interessi_ante_sofferenza"]
 
     g1, g2 = st.columns([1, 1.3])
@@ -1424,10 +1423,13 @@ def _render_sofferenza(ctx):
     with f3:
         st.warning(
             "**🟠 POST-TRIENNIO**\n\n"
-            "Oltre l'annata del pignoramento: **ipotecario solo al tasso "
-            "legale**, l'eccedenza degrada a **chirografo** (art. 2855). "
-            "*Nullo se l'aggiudicazione cade entro l'annata.*\n\n"
-            f"🏛️ legale + 📄 eccedenza:\n\n### {fmt_eur(post_totale)}")
+            "Interessi maturati **oltre l'annata del pignoramento**: la "
+            "garanzia ipotecaria **degrada**, resta ipotecaria solo la quota "
+            "al **tasso legale** (cambia ogni 1° gennaio), l'eccedenza diventa "
+            "**chirografaria**. *Nullo se l'aggiudicazione cade entro "
+            "l'annata.*\n\n"
+            f"🏛️ Ipotecario (legale): **{fmt_eur(post_ipo)}**\n\n"
+            f"📄 Chirografario (eccedenza): **{fmt_eur(post_chiro)}**")
 
     # === Dettaglio: sezione estratto conto + interessi calcolati ===
     with st.expander("🔍 Dettaglio delle voci", expanded=True):
