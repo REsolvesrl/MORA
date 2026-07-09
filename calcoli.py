@@ -802,7 +802,7 @@ def calcola_compenso_delegato(valore_aggiudicazione):
 BASE_SOLO_CAPITALE = "solo_capitale"          # ortodossa (per contestazione)
 BASE_CAPITALE_INTERESSI = "capitale_interessi"  # replica prassi (anatocismo)
 
-# Leva 2 — tasso applicato al triennio PRIMA del precetto:
+# Leva 2 — tasso applicato ai periodi (valori condivisi da pre e post precetto):
 TASSO_TRIENNIO_LEGALE = "legale"              # come i conteggi reali (prudente)
 TASSO_TRIENNIO_CONVENZIONALE = "convenzionale"
 TASSO_TRIENNIO_MORA = "mora"
@@ -820,7 +820,8 @@ def calcola_credito_sofferenza(
     tasso_convenzionale,
     tasso_mora=None,
     base_legale=BASE_CAPITALE_INTERESSI,
-    tasso_triennio=TASSO_TRIENNIO_LEGALE,
+    tasso_pre_precetto=TASSO_TRIENNIO_LEGALE,
+    tasso_post_precetto=TASSO_TRIENNIO_CONVENZIONALE,
     anno_civile=False,
 ):
     """
@@ -834,8 +835,8 @@ def calcola_credito_sofferenza(
     Struttura temporale (triennio ANNO SOLARE dell'anno del pignoramento):
 
         decorrenza ──► 01/01(annata-2) ──► precetto ──► aggiudicazione
-        │  PRE-TRIENNIO  │    TRIENNIO pre-precetto │ TRIENNIO post-precetto │
-        │  legale/CHIRO  │    tasso_triennio/IPO    │  convenzionale/IPO     │
+        │  PRE-TRIENNIO  │  TRIENNIO pre-precetto │  TRIENNIO post-precetto │
+        │  tasso_pre / CHIRO │  tasso_pre / IPO    │  tasso_post / IPO       │
 
     Voci congelate (sempre CHIROGRAFO): quota_interessi_congelata +
     interessi_ante_sofferenza. Spese: grado ipotecario (art. 2855).
@@ -843,11 +844,14 @@ def calcola_credito_sofferenza(
     Leve:
       - base_legale: base degli interessi al tasso legale
         ("solo_capitale" = ortodossa | "capitale_interessi" = prassi Triple A).
-      - tasso_triennio: tasso del triennio PRIMA del precetto
+      - tasso_pre_precetto: tasso PRIMA del precetto — si applica sia al
+        pre-triennio (chiro) sia al triennio pre-precetto (ipo)
         ("legale" | "convenzionale" | "mora").
+      - tasso_post_precetto: tasso DOPO il precetto — triennio post-precetto
+        (ipo) ("convenzionale" | "mora").
 
-    Ritorna un dict con la ripartizione ipotecario/chirografario, il dettaglio
-    dei periodi e il confronto anatocismo (differenza tra le due basi).
+    Il tasso "legale" gira sulla base `base_legale`; "convenzionale"/"mora"
+    girano sempre sulla sola sorte capitale.
     """
     annata_pign = data_pignoramento.year
     inizio_triennio = date(annata_pign - 2, 1, 1)
@@ -855,45 +859,39 @@ def calcola_credito_sofferenza(
     base_leg = sorte_capitale + quota_interessi_congelata \
         if base_legale == BASE_CAPITALE_INTERESSI else sorte_capitale
 
+    def _interesse(tasso_scelta, d_ini, d_fin):
+        """Ritorna (importo, descrizione, segmenti, base) per un periodo."""
+        if d_fin <= d_ini:
+            return 0.0, "", None, 0.0
+        if tasso_scelta == TASSO_TRIENNIO_LEGALE:
+            val, seg = interesse_legale_pro_rata(base_leg, d_ini, d_fin, anno_civile)
+            return val, "legale variabile", seg, base_leg
+        t = (tasso_convenzionale if tasso_scelta == TASSO_TRIENNIO_CONVENZIONALE
+             else (tasso_mora if tasso_mora is not None else tasso_convenzionale))
+        nome = "convenzionale" if tasso_scelta == TASSO_TRIENNIO_CONVENZIONALE else "mora"
+        val = interesse_periodo(sorte_capitale, t, d_ini, d_fin, anno_civile)
+        return val, f"{nome} {t*100:.2f}%", None, sorte_capitale
+
     periodi = []
 
-    # --- PERIODO A: pre-triennio (chirografo), tasso LEGALE su base_leg ---
+    # --- PERIODO A: pre-triennio (chirografo), tasso PRE-precetto ---
     fine_pre = min(inizio_triennio, data_precetto)
-    int_pre_chiro = 0.0
-    if data_decorrenza < fine_pre:
-        int_pre_chiro, seg = interesse_legale_pro_rata(
-            base_leg, data_decorrenza, fine_pre, anno_civile
-        )
+    int_pre_chiro, desc_a, seg_a, base_a = _interesse(
+        tasso_pre_precetto, data_decorrenza, fine_pre)
+    if int_pre_chiro or data_decorrenza < fine_pre:
         periodi.append({
-            "nome": "Pre-triennio (legale, chirografo)",
-            "da": data_decorrenza, "a": fine_pre, "base": base_leg,
-            "tasso_desc": "legale variabile", "importo": int_pre_chiro,
-            "grado": "chirografario", "segmenti": seg,
+            "nome": "Pre-triennio (chirografo)",
+            "da": data_decorrenza, "a": fine_pre, "base": base_a,
+            "tasso_desc": desc_a, "importo": int_pre_chiro,
+            "grado": "chirografario", "segmenti": seg_a,
         })
 
-    # --- PERIODO B: triennio PRIMA del precetto (ipotecario) ---
+    # --- PERIODO B: triennio PRIMA del precetto (ipotecario), tasso PRE ---
     inizio_b = max(inizio_triennio, data_decorrenza)
     fine_b = min(data_precetto, data_aggiudicazione)
-    int_triennio_pre = 0.0
+    int_triennio_pre, desc_b, seg_b, base_b = _interesse(
+        tasso_pre_precetto, inizio_b, fine_b)
     if fine_b > inizio_b:
-        if tasso_triennio == TASSO_TRIENNIO_LEGALE:
-            int_triennio_pre, seg_b = interesse_legale_pro_rata(
-                base_leg, inizio_b, fine_b, anno_civile
-            )
-            desc_b = "legale variabile"
-            base_b = base_leg
-        else:
-            tasso_b = (tasso_convenzionale
-                       if tasso_triennio == TASSO_TRIENNIO_CONVENZIONALE
-                       else (tasso_mora or tasso_convenzionale))
-            int_triennio_pre = interesse_periodo(
-                sorte_capitale, tasso_b, inizio_b, fine_b, anno_civile
-            )
-            tipo_b = ("convenzionale" if tasso_triennio == TASSO_TRIENNIO_CONVENZIONALE
-                      else "mora")
-            desc_b = f"{tipo_b} {tasso_b*100:.2f}%"
-            base_b = sorte_capitale
-            seg_b = None
         periodi.append({
             "nome": "Triennio pre-precetto (ipotecario)",
             "da": inizio_b, "a": fine_b, "base": base_b,
@@ -901,34 +899,29 @@ def calcola_credito_sofferenza(
             "grado": "ipotecario", "segmenti": seg_b,
         })
 
-    # --- PERIODO C: triennio DOPO il precetto (ipotecario), convenzionale ---
+    # --- PERIODO C: triennio DOPO il precetto (ipotecario), tasso POST ---
     inizio_c = max(data_precetto, data_decorrenza)
-    int_triennio_post = 0.0
+    int_triennio_post, desc_c, seg_c, base_c = _interesse(
+        tasso_post_precetto, inizio_c, data_aggiudicazione)
     if data_aggiudicazione > inizio_c:
-        int_triennio_post = interesse_periodo(
-            sorte_capitale, tasso_convenzionale, inizio_c,
-            data_aggiudicazione, anno_civile
-        )
         periodi.append({
             "nome": "Triennio post-precetto (ipotecario)",
-            "da": inizio_c, "a": data_aggiudicazione, "base": sorte_capitale,
-            "tasso_desc": f"convenzionale {tasso_convenzionale*100:.2f}%",
-            "importo": int_triennio_post, "grado": "ipotecario",
-            "segmenti": None,
+            "da": inizio_c, "a": data_aggiudicazione, "base": base_c,
+            "tasso_desc": desc_c, "importo": int_triennio_post,
+            "grado": "ipotecario", "segmenti": seg_c,
         })
 
     # --- Aggregazione ---
     ipo = {
         "sorte": sorte_capitale,
         "spese": spese,
-        "triennio_legale": int_triennio_pre if tasso_triennio == TASSO_TRIENNIO_LEGALE else 0.0,
         "triennio_pre_precetto": int_triennio_pre,
         "triennio_post_precetto": int_triennio_post,
     }
     ipo["totale"] = (sorte_capitale + spese + int_triennio_pre + int_triennio_post)
 
     chiro = {
-        "pre_triennio_legale": int_pre_chiro,
+        "pre_triennio": int_pre_chiro,
         "quota_interessi_congelata": quota_interessi_congelata,
         "interessi_ante_sofferenza": interessi_ante_sofferenza,
     }
@@ -937,18 +930,21 @@ def calcola_credito_sofferenza(
 
     totale_credito = ipo["totale"] + chiro["totale"]
 
-    # --- Confronto anatocismo: legale su capitale+interessi vs solo capitale ---
+    # --- Confronto anatocismo (solo se pre-precetto è al tasso legale) ---
     def _legale_periodo(base):
         tot = 0.0
         if data_decorrenza < fine_pre:
             tot += interesse_legale_pro_rata(base, data_decorrenza, fine_pre, anno_civile)[0]
-        if tasso_triennio == TASSO_TRIENNIO_LEGALE and fine_b > inizio_b:
+        if fine_b > inizio_b:
             tot += interesse_legale_pro_rata(base, inizio_b, fine_b, anno_civile)[0]
         return tot
 
-    legale_con_interessi = _legale_periodo(sorte_capitale + quota_interessi_congelata)
-    legale_solo_capitale = _legale_periodo(sorte_capitale)
-    extra_anatocismo = legale_con_interessi - legale_solo_capitale
+    if tasso_pre_precetto == TASSO_TRIENNIO_LEGALE:
+        legale_con_interessi = _legale_periodo(sorte_capitale + quota_interessi_congelata)
+        legale_solo_capitale = _legale_periodo(sorte_capitale)
+        extra_anatocismo = legale_con_interessi - legale_solo_capitale
+    else:
+        legale_con_interessi = legale_solo_capitale = extra_anatocismo = 0.0
 
     return {
         "ipotecario": ipo,

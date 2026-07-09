@@ -41,8 +41,8 @@ def render(ctx):
     modalita_credito = st.radio(
         "Modalità di calcolo del credito",
         options=[
-            "📉 Rate insolute (mutuo in ammortamento)",
             "🏦 Sofferenza / Estratto conto ex art. 50 TUB",
+            "📉 Rate insolute (mutuo in ammortamento)",
         ],
         index=0,
         horizontal=True,
@@ -1274,13 +1274,33 @@ def _render_sofferenza(ctx):
     t1, t2 = st.columns(2)
     tasso_conv = t1.number_input(
         "Tasso convenzionale (%)", min_value=0.0, value=5.55, step=0.05,
-        help="TAN del mutuo, applicato dal precetto in poi.") / 100
+        help="TAN del mutuo.") / 100
     tasso_mora_v = t2.number_input(
         "Tasso di mora (%)", min_value=0.0, value=7.55, step=0.05,
-        help="TAN + spread. Usato solo se scegli la mora sul triennio.") / 100
+        help="TAN + spread.") / 100
 
     o1, o2 = st.columns(2)
-    base_lbl = o1.radio(
+    tasso_pre_lbl = o1.radio(
+        "Tasso PRIMA del precetto (pre-triennio + triennio)",
+        options=["Legale (come i conteggi reali)", "Convenzionale", "Mora"],
+        index=0,
+        help="Si applica sia al pre-triennio (chirografo) sia al triennio "
+             "fino al precetto. I conteggi reali usano il legale.")
+    tasso_pre = (TASSO_TRIENNIO_LEGALE if tasso_pre_lbl.startswith("Legale")
+                 else (TASSO_TRIENNIO_CONVENZIONALE
+                       if tasso_pre_lbl.startswith("Conv") else TASSO_TRIENNIO_MORA))
+
+    tasso_post_lbl = o2.radio(
+        "Tasso DOPO il precetto (triennio finale)",
+        options=["Convenzionale (come i conteggi reali)", "Mora"],
+        index=0,
+        help="Si applica dal precetto all'aggiudicazione. I conteggi reali "
+             "usano il convenzionale; la mora è la variante 'aggressiva'.")
+    tasso_post = (TASSO_TRIENNIO_CONVENZIONALE
+                  if tasso_post_lbl.startswith("Conv") else TASSO_TRIENNIO_MORA)
+
+    b1, b2 = st.columns(2)
+    base_lbl = b1.radio(
         "Base degli interessi legali",
         options=["Capitale + interessi (prassi conteggi)",
                  "Solo capitale (contestazione, no anatocismo)"],
@@ -1290,20 +1310,7 @@ def _render_sofferenza(ctx):
              "difendibile in opposizione.")
     base_legale = (BASE_CAPITALE_INTERESSI if base_lbl.startswith("Capitale +")
                    else BASE_SOLO_CAPITALE)
-
-    tasso_tri_lbl = o2.radio(
-        "Tasso del triennio (fino al precetto)",
-        options=["Legale (come i conteggi reali)",
-                 "Convenzionale", "Mora"],
-        index=0,
-        help="Nel triennio ex art. 2855 la norma consentirebbe il tasso "
-             "pattuito; i conteggi reali usano il legale (prudente).")
-    tasso_triennio = (TASSO_TRIENNIO_LEGALE if tasso_tri_lbl.startswith("Legale")
-                      else (TASSO_TRIENNIO_CONVENZIONALE
-                            if tasso_tri_lbl.startswith("Conv")
-                            else TASSO_TRIENNIO_MORA))
-
-    anno_civile = st.checkbox(
+    anno_civile = b2.checkbox(
         "Anno civile (366 nei bisestili)", value=True,
         help="I conteggi reali usano l'anno civile (366 per il 2024). "
              "Togli la spunta per il divisore fisso 365.")
@@ -1316,7 +1323,8 @@ def _render_sofferenza(ctx):
         return
 
     if not (data_decorrenza < data_precetto <= data_agg):
-        st.error("⛔ Verifica le date: devono essere decorrenza < precetto ≤ aggiudicazione.")
+        st.error("⛔ Verifica le date: devono essere decorrenza < precetto ≤ aggiudicazione "
+                 "(pignoramento e aggiudicazione si impostano in sidebar).")
         return
 
     r = calcola_credito_sofferenza(
@@ -1325,11 +1333,12 @@ def _render_sofferenza(ctx):
         data_decorrenza=data_decorrenza, data_precetto=data_precetto,
         data_pignoramento=data_pign, data_aggiudicazione=data_agg,
         tasso_convenzionale=tasso_conv, tasso_mora=tasso_mora_v,
-        base_legale=base_legale, tasso_triennio=tasso_triennio,
-        anno_civile=anno_civile,
+        base_legale=base_legale, tasso_pre_precetto=tasso_pre,
+        tasso_post_precetto=tasso_post, anno_civile=anno_civile,
     )
     ipo, chiro = r["ipotecario"], r["chirografario"]
 
+    # === Metriche principali ===
     with st.container(border=True):
         m1, m2, m3 = st.columns(3)
         m1.metric("🏛️ Credito IPOTECARIO", fmt_eur(ipo["totale"]))
@@ -1338,40 +1347,103 @@ def _render_sofferenza(ctx):
     st.caption(f"Triennio (anno solare): dal **{r['inizio_triennio'].strftime('%d/%m/%Y')}** "
                f"(annata del pignoramento + 2 precedenti).")
 
-    fig = go.Figure(go.Pie(
-        labels=["Ipotecario", "Chirografario"],
-        values=[ipo["totale"], chiro["totale"]], hole=0.62, sort=False,
-        marker=dict(colors=[_ORO, _BLU], line=dict(color=_NAVY, width=2)),
-        textinfo="percent", textfont=dict(color="#FFFFFF", size=15),
-        hovertemplate="%{label}: %{value:,.0f} €<extra></extra>",
-    ))
-    fig.update_layout(
-        separators=",.", paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)", font=dict(color=_CREMA),
-        height=280, margin=dict(l=10, r=10, t=20, b=10),
-        legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"),
-        annotations=[dict(text=f"<b>{fmt_eur(r['totale_credito'], 0)}</b>",
-                          x=0.5, y=0.5, showarrow=False,
-                          font=dict(size=14, color=_CREMA))],
-    )
-    st.plotly_chart(fig, width="stretch")
+    # === Divisione ex Art. 2855 c.c.: donut + barra + box ===
+    st.divider()
+    st.subheader("📊 Divisione ex Art. 2855 c.c.")
+    _ORO_CH, _BLU_CH = "#E6D3A6", "#9DB4DD"
+    g1, g2 = st.columns([1, 1.3])
+    with g1:
+        fig = go.Figure(go.Pie(
+            labels=["Ipotecario", "Chirografario"],
+            values=[ipo["totale"], chiro["totale"]], hole=0.62, sort=False,
+            marker=dict(colors=[_ORO, _BLU], line=dict(color=_NAVY, width=2)),
+            textinfo="percent", textfont=dict(color="#FFFFFF", size=15),
+            hovertemplate="%{label}: %{value:,.0f} €<extra></extra>",
+        ))
+        fig.update_layout(
+            title=dict(text="Ipotecario vs Chirografario", font=dict(size=15)),
+            separators=",.", paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)", font=dict(color=_CREMA),
+            height=300, margin=dict(l=10, r=10, t=45, b=10),
+            legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
+            annotations=[dict(text=f"<b>{fmt_eur(r['totale_credito'], 0)}</b>",
+                              x=0.5, y=0.5, showarrow=False,
+                              font=dict(size=14, color=_CREMA))],
+        )
+        st.plotly_chart(fig, width="stretch")
+    with g2:
+        fig_bar = go.Figure()
+        _voci = [
+            ("Capitale + spese (ipo)", ipo["sorte"] + ipo["spese"], _ORO),
+            ("Triennio ipo (interessi)",
+             ipo["triennio_pre_precetto"] + ipo["triennio_post_precetto"], _ORO_CH),
+            ("Pre-triennio (chiro)", chiro["pre_triennio"], _BLU_CH),
+            ("Voci congelate (chiro)",
+             chiro["quota_interessi_congelata"] + chiro["interessi_ante_sofferenza"], _BLU),
+        ]
+        for nome, val, col in _voci:
+            fig_bar.add_trace(go.Bar(
+                y=["Composizione"], x=[val], name=nome, orientation="h",
+                marker=dict(color=col, line=dict(color=_NAVY, width=1.5)),
+                hovertemplate=f"{nome}: %{{x:,.0f}} €<extra></extra>"))
+        fig_bar.update_layout(
+            title=dict(text="Composizione del credito", font=dict(size=15)),
+            barmode="stack", separators=",.",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color=_CREMA),
+            xaxis=dict(tickformat=",.0f", ticksuffix=" €", showgrid=False, color=_CREMA),
+            yaxis=dict(showticklabels=False),
+            legend=dict(orientation="h", y=-0.4, x=0.5, xanchor="center",
+                        font=dict(size=11)),
+            height=300, margin=dict(l=10, r=10, t=45, b=10))
+        st.plotly_chart(fig_bar, width="stretch")
 
+    int_ipo = ipo["triennio_pre_precetto"] + ipo["triennio_post_precetto"]
+    int_chiro_cong = chiro["quota_interessi_congelata"] + chiro["interessi_ante_sofferenza"]
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        st.info(
+            "**🔵 PRE-TRIENNIO (chirografo)**\n\n"
+            "Interessi maturati **prima del triennio** (anno solare): "
+            "degradano a **chirografario**.\n\n"
+            f"📄 Interessi:\n\n### {fmt_eur(chiro['pre_triennio'])}")
+    with f2:
+        st.success(
+            "**🟢 TRIENNIO (ipotecario)**\n\n"
+            "Interessi del **triennio garantito** (annata del pignoramento "
+            "+ 2 precedenti): **grado ipotecario**.\n\n"
+            f"🏛️ Interessi:\n\n### {fmt_eur(int_ipo)}")
+    with f3:
+        st.warning(
+            "**🟠 VOCI CONGELATE (chirografo)**\n\n"
+            "Voci cristallizzate dall'estratto conto (quota interessi rate "
+            "insolute + ante sofferenza).\n\n"
+            f"📄 Congelate:\n\n### {fmt_eur(int_chiro_cong)}")
+
+    # === Dettaglio: sezione estratto conto + interessi calcolati ===
     with st.expander("🔍 Dettaglio delle voci", expanded=True):
-        righe = ["| Voce | Grado | Importo |", "|:--|:--:|--:|"]
-        righe.append(f"| Spese come da precetto | 🏛️ ipo | {fmt_eur(ipo['spese'])} |")
-        righe.append(f"| Sorte capitale | 🏛️ ipo | {fmt_eur(ipo['sorte'])} |")
+        st.markdown("**📄 Voci da Estratto Conto ex art. 50 TUB (cristallizzate)**")
+        righe_ec = [
+            "| Voce | Grado | Importo |", "|:--|:--:|--:|",
+            f"| Sorte capitale | 🏛️ ipo | {fmt_eur(ipo['sorte'])} |",
+            f"| Quota interessi rate insolute / rateo | 📄 chiro "
+            f"| {fmt_eur(chiro['quota_interessi_congelata'])} |",
+            f"| Interessi ante sofferenza | 📄 chiro "
+            f"| {fmt_eur(chiro['interessi_ante_sofferenza'])} |",
+            f"| Spese come da precetto | 🏛️ ipo | {fmt_eur(ipo['spese'])} |",
+        ]
+        st.markdown("\n".join(righe_ec))
+
+        st.markdown("**🧮 Interessi calcolati ex art. 2855 c.c.**")
+        righe_int = ["| Periodo | Grado | Importo |", "|:--|:--:|--:|"]
         for p in r["periodi"]:
             ico = "🏛️ ipo" if p["grado"] == "ipotecario" else "📄 chiro"
-            righe.append(
+            righe_int.append(
                 f"| {p['nome']} · {p['da'].strftime('%d/%m/%y')}→"
                 f"{p['a'].strftime('%d/%m/%y')} ({p['tasso_desc']}) | {ico} "
                 f"| {fmt_eur(p['importo'])} |")
-        righe.append(f"| Quota interessi rate insolute (congelata) | 📄 chiro "
-                     f"| {fmt_eur(chiro['quota_interessi_congelata'])} |")
-        righe.append(f"| Interessi ante sofferenza (congelata) | 📄 chiro "
-                     f"| {fmt_eur(chiro['interessi_ante_sofferenza'])} |")
-        righe.append(f"| **TOTALE** | | **{fmt_eur(r['totale_credito'])}** |")
-        st.markdown("\n".join(righe))
+        righe_int.append(f"| **TOTALE CREDITO** | | **{fmt_eur(r['totale_credito'])}** |")
+        st.markdown("\n".join(righe_int))
 
     ca = r["confronto_anatocismo"]
     if ca["extra"] > 0.01:
@@ -1384,7 +1456,7 @@ def _render_sofferenza(ctx):
             f"di **{fmt_eur(ca['extra'])}**. Seleziona *'Solo capitale'* per "
             f"la versione da opposizione."
         )
-    else:
+    elif ca["base_usata"] == BASE_SOLO_CAPITALE:
         st.success(
             "✅ Base *solo capitale* attiva: nessun anatocismo sugli interessi "
             "legali (versione da contestazione)."

@@ -46,7 +46,7 @@ class TestReplicaCapece:
     def test_pre_triennio_legale_esatto(self):
         # 01/11/2021 -> 01/01/2024 al legale su 107.223,02 = 6.703,23
         r = _capece()
-        assert r["chirografario"]["pre_triennio_legale"] == pytest.approx(6703.23, abs=0.01)
+        assert r["chirografario"]["pre_triennio"] == pytest.approx(6703.23, abs=0.01)
 
     def test_convenzionale_esatto_31_12(self):
         # Tabella A 5,55% su 95.059,96 fino al 31/12/2026 = 6.547,81
@@ -96,11 +96,25 @@ class TestLeveContestazione:
         r = _capece()
         assert r["confronto_anatocismo"]["extra"] == pytest.approx(1248.42, abs=1.0)
 
-    def test_tasso_triennio_mora_aumenta_ipotecario(self):
-        r_legale = _capece(tasso_triennio=TASSO_TRIENNIO_LEGALE)
-        r_mora = _capece(tasso_triennio=TASSO_TRIENNIO_MORA)
+    def test_tasso_pre_precetto_mora_aumenta_ipotecario(self):
+        r_legale = _capece(tasso_pre_precetto=TASSO_TRIENNIO_LEGALE)
+        r_mora = _capece(tasso_pre_precetto=TASSO_TRIENNIO_MORA)
         # con la mora sul triennio pre-precetto l'ipotecario cresce
         assert r_mora["ipotecario"]["triennio_pre_precetto"] > r_legale["ipotecario"]["triennio_pre_precetto"]
+
+    def test_tasso_post_precetto_mora_aumenta_ipotecario(self):
+        from calcoli import TASSO_TRIENNIO_CONVENZIONALE
+        r_conv = _capece(tasso_post_precetto=TASSO_TRIENNIO_CONVENZIONALE)
+        r_mora = _capece(tasso_post_precetto=TASSO_TRIENNIO_MORA)
+        # la mora post-precetto (7,55%) supera il convenzionale (5,55%)
+        assert r_mora["ipotecario"]["triennio_post_precetto"] > r_conv["ipotecario"]["triennio_post_precetto"]
+
+    def test_tasso_pre_precetto_influenza_pre_triennio(self):
+        # il tasso pre-precetto deve influenzare ANCHE il pre-triennio (chiro)
+        r_legale = _capece(tasso_pre_precetto=TASSO_TRIENNIO_LEGALE)
+        r_mora = _capece(tasso_pre_precetto=TASSO_TRIENNIO_MORA)
+        assert r_mora["chirografario"]["pre_triennio"] != pytest.approx(
+            r_legale["chirografario"]["pre_triennio"])
 
 
 class TestQuadratura:
