@@ -117,8 +117,56 @@ class TestLeveContestazione:
             r_legale["chirografario"]["pre_triennio"])
 
 
+class TestPostTriennio:
+    def test_niente_post_triennio_se_aggiudicazione_entro_annata(self):
+        # Capece: aggiudicazione 31/12/2026 = fine annata → post-triennio nullo
+        r = _capece()
+        assert r["ipotecario"]["post_triennio_legale"] == 0.0
+        assert r["chirografario"]["post_triennio_eccedenza"] == 0.0
+
+    def test_post_triennio_se_aggiudicazione_anno_successivo(self):
+        # aggiudicazione 30/06/2027 → oltre l'annata 2026: nasce il post-triennio
+        r = _capece(data_aggiudicazione=date(2027, 6, 30))
+        assert r["ipotecario"]["post_triennio_legale"] > 0.0
+        # con post = convenzionale (5,55% > legale) l'eccedenza chiro è positiva
+        assert r["chirografario"]["post_triennio_eccedenza"] > 0.0
+
+    def test_triennio_post_precetto_si_ferma_a_fine_annata(self):
+        # il triennio ipotecario non deve crescere oltre il 31/12 dell'annata:
+        # spostando l'aggiudicazione al 2027 la voce triennio resta invariata
+        r_2026 = _capece(data_aggiudicazione=date(2026, 12, 31))
+        r_2027 = _capece(data_aggiudicazione=date(2027, 6, 30))
+        # scarto atteso ≈ 1 giorno di confine (31/12→01/01): NON i ~6 mesi
+        # che si avrebbero se il triennio non fosse tagliato all'annata
+        assert r_2027["ipotecario"]["triennio_post_precetto"] == pytest.approx(
+            r_2026["ipotecario"]["triennio_post_precetto"], abs=20.0)
+
+    def test_post_triennio_ipo_al_legale_non_convenzionale(self):
+        # oltre l'annata l'ipotecario è al LEGALE (~1,6-2%), non al 5,55%:
+        # la quota ipo del post-triennio deve essere inferiore a quella che si
+        # avrebbe applicando il convenzionale per lo stesso periodo
+        from calcoli import interesse_periodo
+        r = _capece(data_aggiudicazione=date(2027, 12, 31))
+        ipo_legale = r["ipotecario"]["post_triennio_legale"]
+        conv_stesso_periodo = interesse_periodo(
+            95059.96, 0.0555, date(2027, 1, 1), date(2027, 12, 31), anno_civile=True)
+        assert ipo_legale < conv_stesso_periodo
+
+
 class TestQuadratura:
     def test_ipo_piu_chiro_uguale_totale(self):
         r = _capece()
         somma = r["ipotecario"]["totale"] + r["chirografario"]["totale"]
         assert somma == pytest.approx(r["totale_credito"], abs=0.01)
+
+    def test_quadratura_con_post_triennio(self):
+        r = _capece(data_aggiudicazione=date(2027, 6, 30))
+        somma = r["ipotecario"]["totale"] + r["chirografario"]["totale"]
+        assert somma == pytest.approx(r["totale_credito"], abs=0.01)
+        # anche la somma dei periodi + voci congelate + capitale + spese quadra
+        somma_periodi = sum(p["importo"] for p in r["periodi"])
+        atteso = (r["ipotecario"]["sorte"] + r["ipotecario"]["spese"]
+                  + r["chirografario"]["quota_interessi_congelata"]
+                  + r["chirografario"]["interessi_ante_sofferenza"]
+                  + somma_periodi)
+        assert atteso == pytest.approx(r["totale_credito"], abs=0.01)

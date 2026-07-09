@@ -96,6 +96,99 @@ def _stile_tabella_base():
 
 
 # ==========================================================
+# TEMA DARK (navy + oro) — replica i colori del software
+# ==========================================================
+
+# Palette di brand (identica a streamlit_app.py / config.toml)
+_D_NAVY = colors.HexColor("#1A2744")       # fondo pagina
+_D_NAVY_CARD = colors.HexColor("#243459")  # riga tabella (pari)
+_D_NAVY_CARD2 = colors.HexColor("#2C3E63")  # riga tabella (dispari)
+_D_ORO = colors.HexColor("#C9A96A")        # accenti / intestazioni
+_D_CREMA = colors.HexColor("#ECE7DA")      # testo corpo
+_D_BLU = colors.HexColor("#6E8FC7")        # chirografario
+_D_GRID = colors.HexColor("#3C4C6E")       # linee griglia
+_D_CAPTION = colors.HexColor("#A9B4C9")    # testo tenue
+
+
+def _stili_dark():
+    base = getSampleStyleSheet()
+    return {
+        "titolo": ParagraphStyle(
+            "TitoloD", parent=base["Heading1"], fontSize=18,
+            textColor=_D_ORO, spaceAfter=4, alignment=1,
+        ),
+        "sottotitolo": ParagraphStyle(
+            "SottoD", parent=base["Normal"], fontSize=10,
+            textColor=_D_CREMA, spaceAfter=12, alignment=1,
+        ),
+        "h2": ParagraphStyle(
+            "H2D", parent=base["Heading2"], fontSize=14,
+            textColor=_D_ORO, spaceBefore=12, spaceAfter=6,
+        ),
+        "h3": ParagraphStyle(
+            "H3D", parent=base["Heading3"], fontSize=11,
+            textColor=_D_CREMA, spaceBefore=8, spaceAfter=4,
+        ),
+        "body": ParagraphStyle(
+            "BodyD", parent=base["Normal"], fontSize=10,
+            leading=14, spaceAfter=4, textColor=_D_CREMA,
+        ),
+        "caption": ParagraphStyle(
+            "CaptionD", parent=base["Normal"], fontSize=8,
+            textColor=_D_CAPTION, leading=10, spaceAfter=2,
+        ),
+        "info_box": ParagraphStyle(
+            "InfoBoxD", parent=base["Normal"], fontSize=9,
+            backColor=_D_NAVY_CARD, textColor=_D_CREMA,
+            borderColor=_D_ORO, borderWidth=1,
+            borderPadding=8, leading=12, spaceAfter=8,
+        ),
+        "warn_box": ParagraphStyle(
+            "WarnBoxD", parent=base["Normal"], fontSize=9,
+            backColor=colors.HexColor("#3A2E1A"), textColor=_D_CREMA,
+            borderColor=_D_ORO, borderWidth=1,
+            borderPadding=8, leading=13, spaceAfter=8,
+        ),
+    }
+
+
+def _stile_tabella_dark(evidenzia_ultima: bool = False):
+    ts = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), _D_ORO),
+        ("TEXTCOLOR", (0, 0), (-1, 0), _D_NAVY),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("ALIGN", (-1, 1), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TEXTCOLOR", (0, 1), (-1, -1), _D_CREMA),
+        ("GRID", (0, 0), (-1, -1), 0.5, _D_GRID),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_D_NAVY_CARD, _D_NAVY_CARD2]),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+    ])
+    if evidenzia_ultima:
+        # riga totale: fondo oro tenue + testo oro in grassetto
+        ts.add("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#33405E"))
+        ts.add("TEXTCOLOR", (0, -1), (-1, -1), _D_ORO)
+        ts.add("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")
+        ts.add("LINEABOVE", (0, -1), (-1, -1), 1.2, _D_ORO)
+    return ts
+
+
+def _sfondo_navy(canvas, doc):
+    """Dipinge il fondo navy su tutta la pagina (tema dark)."""
+    canvas.saveState()
+    canvas.setFillColor(_D_NAVY)
+    w, h = doc.pagesize
+    canvas.rect(0, 0, w, h, stroke=0, fill=1)
+    # sottile filetto oro in alto come richiamo del brand
+    canvas.setFillColor(_D_ORO)
+    canvas.rect(0, h - 6, w, 6, stroke=0, fill=1)
+    canvas.restoreState()
+
+
+# ==========================================================
 # SEZIONI DEL REPORT
 # ==========================================================
 
@@ -634,8 +727,14 @@ def _sezione_footer(stili, nota=None):
 
 def _build_pdf(titolo_doc: str, titolo_header: str,
                sezioni_corpo: list, password: str = "",
-               nota_footer: str = None) -> bytes:
-    """Compone un PDF (header + sezioni + footer), lo cifra, ritorna bytes."""
+               nota_footer: str = None, stili: dict = None,
+               on_page=None) -> bytes:
+    """Compone un PDF (header + sezioni + footer), lo cifra, ritorna bytes.
+
+    stili: dizionario di stili (default = tema chiaro _stili()).
+    on_page: callback opzionale (canvas, doc) per disegnare lo sfondo pagina
+             (usato dal tema dark per il fondo navy).
+    """
     enc = pdfencrypt.StandardEncryption(
         userPassword=password or "",
         ownerPassword="mora-owner-resolve-2026",
@@ -654,12 +753,15 @@ def _build_pdf(titolo_doc: str, titolo_header: str,
         author="MORA / Resolve S.r.l.",
         encrypt=enc,
     )
-    stili = _stili()
+    stili = stili or _stili()
     elementi = []
     elementi += _sezione_header(stili, titolo_header)
     elementi += sezioni_corpo
     elementi += _sezione_footer(stili, nota_footer)
-    doc.build(elementi)
+    if on_page is not None:
+        doc.build(elementi, onFirstPage=on_page, onLaterPages=on_page)
+    else:
+        doc.build(elementi)
     return buf.getvalue()
 
 
@@ -877,4 +979,154 @@ def genera_report_pdf_npl(report_data: dict, password: str = "") -> bytes:
         titolo_header="🤝 Report Acquisto Credito NPL e DPO",
         sezioni_corpo=corpo,
         password=password,
+    )
+
+
+# ==========================================================
+# API PUBBLICA – Sofferenza / Estratto conto ex art. 50 TUB (TEMA DARK)
+# ==========================================================
+
+def genera_report_pdf_sofferenza(report_data: dict, password: str = "") -> bytes:
+    """Report della modalità 'Sofferenza / Estratto conto ex art. 50 TUB'.
+
+    Usa il TEMA DARK (navy + oro) per riprodurre i colori del software.
+
+    report_data deve contenere:
+      - input (dict): sorte, quota_int, ante_soff, spese,
+        data_decorrenza, data_precetto, data_pignoramento,
+        data_aggiudicazione, tasso_convenzionale, tasso_mora,
+        tasso_pre_desc, tasso_post_desc, base_desc, anno_civile
+      - risultato (dict): output di calcola_credito_sofferenza
+    """
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    stili = _stili_dark()
+    inp = report_data["input"]
+    r = report_data["risultato"]
+    ipo, chiro = r["ipotecario"], r["chirografario"]
+
+    cell = ParagraphStyle(
+        "CellSoffD", parent=getSampleStyleSheet()["Normal"],
+        fontSize=8.5, leading=11, textColor=_D_CREMA,
+    )
+
+    corpo = []
+
+    # --- 1. Dati di input (voci cristallizzate + date + tassi) ---
+    rows_in = [
+        ["Parametro", "Valore"],
+        ["Sorte capitale (puro)", _fmt_eur(inp["sorte"])],
+        ["Quota interessi rate insolute / rateo", _fmt_eur(inp["quota_int"])],
+        ["Interessi ante sofferenza", _fmt_eur(inp["ante_soff"])],
+        ["Spese come da precetto", _fmt_eur(inp["spese"])],
+        ["Decorrenza interessi", _fmt_data(inp["data_decorrenza"])],
+        ["Data conteggio precetto (cambio tasso)", _fmt_data(inp["data_precetto"])],
+        ["Data pignoramento", _fmt_data(inp["data_pignoramento"])],
+        ["Data di aggiudicazione (fine conteggio)", _fmt_data(inp["data_aggiudicazione"])],
+        ["Tasso convenzionale / mutuo", _fmt_pct(inp["tasso_convenzionale"])],
+        ["Tasso di mora", _fmt_pct(inp["tasso_mora"])],
+        ["Tasso PRIMA del precetto", inp["tasso_pre_desc"]],
+        ["Tasso DOPO il precetto", inp["tasso_post_desc"]],
+        ["Base interessi legali", inp["base_desc"]],
+        ["Base giorni", "Anno civile (366 bisestili)" if inp["anno_civile"]
+         else "Anno commerciale (365 fisso)"],
+    ]
+    tbl_in = Table(rows_in, colWidths=[100 * mm, 74 * mm])
+    tbl_in.setStyle(_stile_tabella_dark())
+    corpo += [
+        Paragraph("1. Dati di input (estratto conto a sofferenza)", stili["h2"]),
+        tbl_in, Spacer(1, 8),
+    ]
+
+    # --- 2. Riepilogo importi (ipo / chiro / totale) ---
+    rows_rip = [
+        ["Voce", "Importo"],
+        ["🏛️  Credito IPOTECARIO", _fmt_eur(ipo["totale"])],
+        ["📄  Credito CHIROGRAFARIO", _fmt_eur(chiro["totale"])],
+        ["💰  TOTALE del credito", _fmt_eur(r["totale_credito"])],
+    ]
+    tbl_rip = Table(rows_rip, colWidths=[110 * mm, 64 * mm])
+    tbl_rip.setStyle(_stile_tabella_dark(evidenzia_ultima=True))
+    corpo += [
+        Paragraph("2. Riepilogo del credito", stili["h2"]),
+        tbl_rip,
+        Paragraph(
+            f"Triennio ex art. 2855 c.c. (anno solare): decorre dal "
+            f"{_fmt_data(r['inizio_triennio'])} (annata del pignoramento + 2 "
+            f"precedenti). Somma intimata a precetto: {_fmt_eur(r['somma_intimata'])}.",
+            stili["caption"]
+        ),
+        Spacer(1, 8),
+    ]
+
+    # --- 3. Divisione ex art. 2855 c.c. (periodi calcolati) ---
+    rows_per = [["Periodo", "Grado", "Importo"]]
+    for p in r["periodi"]:
+        grado = "🏛️ ipotecario" if p["grado"] == "ipotecario" else "📄 chirografario"
+        desc = (f"<b>{p['nome']}</b><br/>{_fmt_data(p['da'])} → "
+                f"{_fmt_data(p['a'])} · {p['tasso_desc']}")
+        rows_per.append([Paragraph(desc, cell), grado, _fmt_eur(p["importo"])])
+    somma_periodi = sum(p["importo"] for p in r["periodi"])
+    rows_per.append(["Totale interessi calcolati", "", _fmt_eur(somma_periodi)])
+    tbl_per = Table(rows_per, colWidths=[104 * mm, 34 * mm, 36 * mm])
+    tbl_per.setStyle(_stile_tabella_dark(evidenzia_ultima=True))
+    corpo += [
+        Paragraph("3. Divisione ex art. 2855 c.c. (interessi calcolati)", stili["h2"]),
+        tbl_per,
+        Paragraph(
+            "Pre-triennio → chirografo; triennio garantito → ipotecario; "
+            "post-triennio → ipotecario al solo tasso legale + eccedenza "
+            "chirografaria (presente solo se l'aggiudicazione cade oltre "
+            "l'annata del pignoramento).",
+            stili["caption"]
+        ),
+        Spacer(1, 8),
+    ]
+
+    # --- 4. Voci cristallizzate da estratto conto ex art. 50 TUB ---
+    rows_ec = [
+        ["Voce (grado)", "Importo"],
+        ["Sorte capitale — 🏛️ ipotecario", _fmt_eur(ipo["sorte"])],
+        ["Spese come da precetto — 🏛️ ipotecario", _fmt_eur(ipo["spese"])],
+        ["Quota interessi rate insolute — 📄 chirografario",
+         _fmt_eur(chiro["quota_interessi_congelata"])],
+        ["Interessi ante sofferenza — 📄 chirografario",
+         _fmt_eur(chiro["interessi_ante_sofferenza"])],
+    ]
+    tbl_ec = Table(rows_ec, colWidths=[124 * mm, 50 * mm])
+    tbl_ec.setStyle(_stile_tabella_dark())
+    corpo += [
+        Paragraph("4. Voci congelate da estratto conto ex art. 50 TUB", stili["h2"]),
+        tbl_ec, Spacer(1, 8),
+    ]
+
+    # --- 5. Nota anatocismo (leva di contestazione) ---
+    ca = r["confronto_anatocismo"]
+    if ca["extra"] > 0.01:
+        nota = (
+            f"⚖️ <b>Punto di contestazione — anatocismo (art. 1283 c.c.).</b><br/>"
+            f"Gli interessi legali sono calcolati sulla base "
+            f"<b>capitale + interessi scaduti</b> "
+            f"({_fmt_eur(ca['legale_capitale_interessi'])}). Sulla sola quota "
+            f"capitale sarebbero {_fmt_eur(ca['legale_solo_capitale'])}: "
+            f"differenza contestabile di <b>{_fmt_eur(ca['extra'])}</b>."
+        )
+        corpo += [
+            Paragraph("5. Leva di contestazione", stili["h2"]),
+            Paragraph(nota, stili["warn_box"]),
+        ]
+
+    return _build_pdf(
+        titolo_doc="Report MORA – Sofferenza / Estratto conto ex art. 50 TUB",
+        titolo_header="🏦 Report Credito da Sofferenza – Art. 2855 c.c.",
+        sezioni_corpo=corpo,
+        password=password,
+        stili=stili,
+        on_page=_sfondo_navy,
+        nota_footer=(
+            "Documento generato da MORA (Resolve S.r.l.) — modalità Sofferenza / "
+            "Estratto conto ex art. 50 TUB. Credito cristallizzato secondo la "
+            "prassi dei conteggi professionali. I risultati vanno verificati da "
+            "un professionista. Il PDF è cifrato: copia e modifica disabilitate."
+        ),
     )

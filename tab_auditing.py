@@ -21,7 +21,7 @@ from calcoli import (
     TASSO_TRIENNIO_MORA,
 )
 from piano_io import carica_piano_da_file
-from pdf_export import genera_report_pdf
+from pdf_export import genera_report_pdf, genera_report_pdf_sofferenza
 from formatters import fmt_eur, fmt_pct
 from ui_common import valori_esempio
 
@@ -1271,13 +1271,18 @@ def _render_sofferenza(ctx):
              "il convenzionale.")
 
     st.markdown("#### 📊 Tassi e opzioni di calcolo")
-    t1, t2 = st.columns(2)
-    tasso_conv = t1.number_input(
-        "Tasso convenzionale (%)", min_value=0.0, value=5.55, step=0.05,
-        help="TAN del mutuo.") / 100
-    tasso_mora_v = t2.number_input(
-        "Tasso di mora (%)", min_value=0.0, value=7.55, step=0.05,
-        help="TAN + spread.") / 100
+    # Tassi e base-giorni vengono dalla SIDEBAR (fonte unica): così restano
+    # sincronizzati con la modalità standard e non si creano disallineamenti.
+    tasso_conv = ctx["tasso_convenzionale"]
+    tasso_mora_v = ctx["tasso_mora"]
+    anno_civile = ctx["anno_civile"]
+    st.caption(
+        f"📌 **Tasso convenzionale/mutuo** ({tasso_conv*100:.2f}%), **tasso di "
+        f"mora** ({tasso_mora_v*100:.2f}%) e **base giorni** "
+        f"({'anno civile' if anno_civile else 'anno commerciale 365'}) sono "
+        f"presi dalla **sidebar** (*Parametri generali*). Modificali lì: si "
+        f"aggiornano ovunque nel software."
+    )
 
     o1, o2 = st.columns(2)
     tasso_pre_lbl = o1.radio(
@@ -1299,8 +1304,7 @@ def _render_sofferenza(ctx):
     tasso_post = (TASSO_TRIENNIO_CONVENZIONALE
                   if tasso_post_lbl.startswith("Conv") else TASSO_TRIENNIO_MORA)
 
-    b1, b2 = st.columns(2)
-    base_lbl = b1.radio(
+    base_lbl = st.radio(
         "Base degli interessi legali",
         options=["Capitale + interessi (prassi conteggi)",
                  "Solo capitale (contestazione, no anatocismo)"],
@@ -1310,10 +1314,6 @@ def _render_sofferenza(ctx):
              "difendibile in opposizione.")
     base_legale = (BASE_CAPITALE_INTERESSI if base_lbl.startswith("Capitale +")
                    else BASE_SOLO_CAPITALE)
-    anno_civile = b2.checkbox(
-        "Anno civile (366 nei bisestili)", value=True,
-        help="I conteggi reali usano l'anno civile (366 per il 2024). "
-             "Togli la spunta per il divisore fisso 365.")
 
     st.divider()
     if st.button("🧮 Calcola credito", type="primary"):
@@ -1351,6 +1351,14 @@ def _render_sofferenza(ctx):
     st.divider()
     st.subheader("📊 Divisione ex Art. 2855 c.c.")
     _ORO_CH, _BLU_CH = "#E6D3A6", "#9DB4DD"
+    _ORO_XCH, _BLU_XCH = "#F0E4C4", "#C3D2EA"  # toni chiarissimi (post-triennio)
+
+    int_ipo = ipo["triennio_pre_precetto"] + ipo["triennio_post_precetto"]
+    post_ipo = ipo["post_triennio_legale"]
+    post_chiro = chiro["post_triennio_eccedenza"]
+    post_totale = post_ipo + post_chiro
+    int_chiro_cong = chiro["quota_interessi_congelata"] + chiro["interessi_ante_sofferenza"]
+
     g1, g2 = st.columns([1, 1.3])
     with g1:
         fig = go.Figure(go.Pie(
@@ -1375,13 +1383,15 @@ def _render_sofferenza(ctx):
         fig_bar = go.Figure()
         _voci = [
             ("Capitale + spese (ipo)", ipo["sorte"] + ipo["spese"], _ORO),
-            ("Triennio ipo (interessi)",
-             ipo["triennio_pre_precetto"] + ipo["triennio_post_precetto"], _ORO_CH),
+            ("Triennio ipo (interessi)", int_ipo, _ORO_CH),
+            ("Post-triennio ipo (legale)", post_ipo, _ORO_XCH),
             ("Pre-triennio (chiro)", chiro["pre_triennio"], _BLU_CH),
-            ("Voci congelate (chiro)",
-             chiro["quota_interessi_congelata"] + chiro["interessi_ante_sofferenza"], _BLU),
+            ("Post-triennio chiro (eccedenza)", post_chiro, _BLU_XCH),
+            ("Voci congelate (chiro)", int_chiro_cong, _BLU),
         ]
         for nome, val, col in _voci:
+            if val <= 0.005:   # non affollare la legenda con voci nulle
+                continue
             fig_bar.add_trace(go.Bar(
                 y=["Composizione"], x=[val], name=nome, orientation="h",
                 marker=dict(color=col, line=dict(color=_NAVY, width=1.5)),
@@ -1398,8 +1408,6 @@ def _render_sofferenza(ctx):
             height=300, margin=dict(l=10, r=10, t=45, b=10))
         st.plotly_chart(fig_bar, width="stretch")
 
-    int_ipo = ipo["triennio_pre_precetto"] + ipo["triennio_post_precetto"]
-    int_chiro_cong = chiro["quota_interessi_congelata"] + chiro["interessi_ante_sofferenza"]
     f1, f2, f3 = st.columns(3)
     with f1:
         st.info(
@@ -1415,10 +1423,11 @@ def _render_sofferenza(ctx):
             f"🏛️ Interessi:\n\n### {fmt_eur(int_ipo)}")
     with f3:
         st.warning(
-            "**🟠 VOCI CONGELATE (chirografo)**\n\n"
-            "Voci cristallizzate dall'estratto conto (quota interessi rate "
-            "insolute + ante sofferenza).\n\n"
-            f"📄 Congelate:\n\n### {fmt_eur(int_chiro_cong)}")
+            "**🟠 POST-TRIENNIO**\n\n"
+            "Oltre l'annata del pignoramento: **ipotecario solo al tasso "
+            "legale**, l'eccedenza degrada a **chirografo** (art. 2855). "
+            "*Nullo se l'aggiudicazione cade entro l'annata.*\n\n"
+            f"🏛️ legale + 📄 eccedenza:\n\n### {fmt_eur(post_totale)}")
 
     # === Dettaglio: sezione estratto conto + interessi calcolati ===
     with st.expander("🔍 Dettaglio delle voci", expanded=True):
@@ -1461,3 +1470,41 @@ def _render_sofferenza(ctx):
             "✅ Base *solo capitale* attiva: nessun anatocismo sugli interessi "
             "legali (versione da contestazione)."
         )
+
+    # === Esportazione PDF (tema dark, colori del software) ===
+    st.divider()
+    if st.button("📄 Genera Report PDF (Sofferenza)", type="primary",
+                 key="soff_genera_pdf"):
+        try:
+            report_data = {
+                "input": {
+                    "sorte": sorte, "quota_int": quota_int, "ante_soff": ante_soff,
+                    "spese": spese, "data_decorrenza": data_decorrenza,
+                    "data_precetto": data_precetto, "data_pignoramento": data_pign,
+                    "data_aggiudicazione": data_agg, "tasso_convenzionale": tasso_conv,
+                    "tasso_mora": tasso_mora_v, "tasso_pre_desc": tasso_pre_lbl,
+                    "tasso_post_desc": tasso_post_lbl, "base_desc": base_lbl,
+                    "anno_civile": anno_civile,
+                },
+                "risultato": r,
+            }
+            st.session_state["pdf_soff_bytes"] = genera_report_pdf_sofferenza(
+                report_data, password=pdf_password)
+            st.session_state["pdf_soff_protetto"] = bool(pdf_password)
+        except Exception as e:
+            st.warning(f"⚠️ Generazione PDF non riuscita: {e}. "
+                       "I calcoli a schermo restano validi.")
+            st.session_state.pop("pdf_soff_bytes", None)
+
+    if "pdf_soff_bytes" in st.session_state:
+        if st.session_state.get("pdf_soff_protetto"):
+            st.caption("🔒 PDF cifrato con la password inserita in sidebar. "
+                       "Copia del testo e modifica disabilitate.")
+        else:
+            st.caption("🔒 PDF senza password di apertura, ma con copia del "
+                       "testo e modifica disabilitate.")
+        st.download_button(
+            label="⬇️ Scarica il Report PDF",
+            data=st.session_state["pdf_soff_bytes"],
+            file_name=f"Report_Sofferenza_MORA_{date.today().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf", type="primary", key="soff_download_pdf")

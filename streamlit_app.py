@@ -242,6 +242,15 @@ with st.sidebar:
     tasso_mora = st.number_input(
         "Tasso di mora (%)", min_value=0.0, value=8.0, step=0.1,
         key="sb_tasso_mora",
+        help="TAN + spread di mora pattuito. Usato dalla modalità 'Rate "
+             "insolute' e (come opzione) dalla modalità 'Sofferenza'.",
+    ) / 100
+    tasso_convenzionale = st.number_input(
+        "Tasso convenzionale / mutuo (%)", min_value=0.0, value=5.55, step=0.05,
+        key="sb_tasso_convenzionale",
+        help="TAN del mutuo (tasso convenzionale). Usato dalla modalità "
+             "'Sofferenza / Estratto conto ex art. 50 TUB' per il triennio "
+             "dopo il precetto.",
     ) / 100
 
     st.divider()
@@ -336,6 +345,7 @@ with st.sidebar:
 # --- Contesto condiviso: valori della sidebar passati ai moduli dei tab ---
 ctx = {
     "tasso_mora": tasso_mora,
+    "tasso_convenzionale": tasso_convenzionale,
     "data_stipula": data_stipula,
     "data_pignoramento": data_pignoramento,
     "data_fine": data_fine,

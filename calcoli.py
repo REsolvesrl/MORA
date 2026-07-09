@@ -834,9 +834,15 @@ def calcola_credito_sofferenza(
 
     Struttura temporale (triennio ANNO SOLARE dell'anno del pignoramento):
 
-        decorrenza ──► 01/01(annata-2) ──► precetto ──► aggiudicazione
-        │  PRE-TRIENNIO  │  TRIENNIO pre-precetto │  TRIENNIO post-precetto │
-        │  tasso_pre / CHIRO │  tasso_pre / IPO    │  tasso_post / IPO       │
+        decorrenza ─► 01/01(annata-2) ─► precetto ─► 31/12(annata) ─► aggiudicazione
+        │ PRE-TRIENNIO │ TRIENNIO pre-prec. │ TRIENNIO post-prec. │ POST-TRIENNIO │
+        │ tasso_pre/CHIRO │ tasso_pre/IPO   │ tasso_post/IPO      │ legale/IPO +  │
+        │                 │                 │                     │ ecced./CHIRO  │
+
+    POST-triennio: oltre la fine dell'annata del pignoramento la garanzia
+    ipotecaria copre solo il tasso LEGALE; l'eccedenza (tasso_post − legale)
+    degrada a chirografo. Presente solo se l'aggiudicazione cade nell'anno
+    successivo all'annata in corso.
 
     Voci congelate (sempre CHIROGRAFO): quota_interessi_congelata +
     interessi_ante_sofferenza. Spese: grado ipotecario (art. 2855).
@@ -855,6 +861,7 @@ def calcola_credito_sofferenza(
     """
     annata_pign = data_pignoramento.year
     inizio_triennio = date(annata_pign - 2, 1, 1)
+    fine_annata = date(annata_pign + 1, 1, 1)  # 1° gennaio dopo l'annata in corso
 
     base_leg = sorte_capitale + quota_interessi_congelata \
         if base_legale == BASE_CAPITALE_INTERESSI else sorte_capitale
@@ -900,16 +907,51 @@ def calcola_credito_sofferenza(
         })
 
     # --- PERIODO C: triennio DOPO il precetto (ipotecario), tasso POST ---
+    # Il triennio ipotecario si ferma alla fine dell'annata in corso: oltre,
+    # è POST-triennio (grado ipotecario solo al tasso legale, art. 2855).
     inizio_c = max(data_precetto, data_decorrenza)
+    fine_c = min(data_aggiudicazione, fine_annata)
     int_triennio_post, desc_c, seg_c, base_c = _interesse(
-        tasso_post_precetto, inizio_c, data_aggiudicazione)
-    if data_aggiudicazione > inizio_c:
+        tasso_post_precetto, inizio_c, fine_c)
+    if fine_c > inizio_c:
         periodi.append({
             "nome": "Triennio post-precetto (ipotecario)",
-            "da": inizio_c, "a": data_aggiudicazione, "base": base_c,
+            "da": inizio_c, "a": fine_c, "base": base_c,
             "tasso_desc": desc_c, "importo": int_triennio_post,
             "grado": "ipotecario", "segmenti": seg_c,
         })
+
+    # --- PERIODO D: POST-triennio (oltre l'annata in corso) ---
+    # Dopo la fine dell'annata del pignoramento la garanzia ipotecaria copre
+    # solo il tasso LEGALE; l'eccedenza (tasso_post − legale) degrada a
+    # chirografo (art. 2855 c.c., come la Fase 3 della modalità standard).
+    inizio_d = max(fine_annata, inizio_c)
+    post_ipo_legale = 0.0
+    post_chiro_ecc = 0.0
+    if data_aggiudicazione > inizio_d:
+        post_ipo_legale, seg_d = interesse_legale_pro_rata(
+            sorte_capitale, inizio_d, data_aggiudicazione, anno_civile)
+        t_post_rate = (tasso_convenzionale
+                       if tasso_post_precetto == TASSO_TRIENNIO_CONVENZIONALE
+                       else (tasso_mora if tasso_mora is not None
+                             else tasso_convenzionale))
+        full_post = interesse_periodo(
+            sorte_capitale, t_post_rate, inizio_d, data_aggiudicazione, anno_civile)
+        post_chiro_ecc = max(0.0, full_post - post_ipo_legale)
+        periodi.append({
+            "nome": "Post-triennio (ipotecario · legale)",
+            "da": inizio_d, "a": data_aggiudicazione, "base": sorte_capitale,
+            "tasso_desc": "legale variabile", "importo": post_ipo_legale,
+            "grado": "ipotecario", "segmenti": seg_d,
+        })
+        if post_chiro_ecc > 0.005:
+            periodi.append({
+                "nome": "Post-triennio (eccedenza · chirografo)",
+                "da": inizio_d, "a": data_aggiudicazione, "base": sorte_capitale,
+                "tasso_desc": f"eccedenza su legale ({t_post_rate*100:.2f}%)",
+                "importo": post_chiro_ecc, "grado": "chirografario",
+                "segmenti": None,
+            })
 
     # --- Aggregazione ---
     ipo = {
@@ -917,16 +959,19 @@ def calcola_credito_sofferenza(
         "spese": spese,
         "triennio_pre_precetto": int_triennio_pre,
         "triennio_post_precetto": int_triennio_post,
+        "post_triennio_legale": post_ipo_legale,
     }
-    ipo["totale"] = (sorte_capitale + spese + int_triennio_pre + int_triennio_post)
+    ipo["totale"] = (sorte_capitale + spese + int_triennio_pre
+                     + int_triennio_post + post_ipo_legale)
 
     chiro = {
         "pre_triennio": int_pre_chiro,
+        "post_triennio_eccedenza": post_chiro_ecc,
         "quota_interessi_congelata": quota_interessi_congelata,
         "interessi_ante_sofferenza": interessi_ante_sofferenza,
     }
-    chiro["totale"] = (int_pre_chiro + quota_interessi_congelata
-                       + interessi_ante_sofferenza)
+    chiro["totale"] = (int_pre_chiro + post_chiro_ecc
+                       + quota_interessi_congelata + interessi_ante_sofferenza)
 
     totale_credito = ipo["totale"] + chiro["totale"]
 
