@@ -10,9 +10,15 @@ from calcoli import (
     FREQUENZA_MESI,
     calcola_triennio,
     calcola_mora_unificato,
+    calcola_credito_sofferenza,
     estrai_rate_insolute_da_piano,
     genera_piano_ammortamento,
     METODO_TRIENNIO_SOLARE,
+    BASE_CAPITALE_INTERESSI,
+    BASE_SOLO_CAPITALE,
+    TASSO_TRIENNIO_LEGALE,
+    TASSO_TRIENNIO_CONVENZIONALE,
+    TASSO_TRIENNIO_MORA,
 )
 from piano_io import carica_piano_da_file
 from pdf_export import genera_report_pdf
@@ -30,6 +36,29 @@ def render(ctx):
     metodo_triennio = ctx["metodo_triennio"]
     anno_civile = ctx["anno_civile"]
     pdf_password = ctx["pdf_password"]
+
+    # --- Scelta della modalità di calcolo del credito ---
+    modalita_credito = st.radio(
+        "Modalità di calcolo del credito",
+        options=[
+            "📉 Rate insolute (mutuo in ammortamento)",
+            "🏦 Sofferenza / Estratto conto ex art. 50 TUB",
+        ],
+        index=0,
+        horizontal=True,
+        key="t1_modalita_credito",
+        help=(
+            "**Rate insolute:** genera le rate dal piano e calcola la mora "
+            "rata per rata (mutuo ancora in ammortamento).\n\n"
+            "**Sofferenza / Estratto conto:** credito già 'cristallizzato' "
+            "da estratto conto ex art. 50 TUB (posizione a sofferenza), "
+            "come nei conteggi professionali. Riproduce quel metodo e offre "
+            "la versione 'da contestazione' senza anatocismo."
+        ),
+    )
+    if modalita_credito.startswith("🏦"):
+        _render_sofferenza(ctx)
+        return
 
     intro_col, ex_col = st.columns([3, 1])
     with intro_col:
@@ -1182,4 +1211,179 @@ def render(ctx):
             file_name=nome_file,
             mime="application/pdf",
             type="primary",
+        )
+
+
+def _render_sofferenza(ctx):
+    """Modalità 'Sofferenza / Estratto conto ex art. 50 TUB'.
+
+    Credito cristallizzato: replica i conteggi professionali (Triple A /
+    doValue) e offre la variante 'da contestazione' (senza anatocismo).
+    """
+    pdf_password = ctx["pdf_password"]
+    _NAVY, _ORO, _BLU, _CREMA = "#1A2744", "#C9A96A", "#6E8FC7", "#ECE7DA"
+
+    st.subheader("🏦 Credito da Sofferenza / Estratto conto ex art. 50 TUB")
+    st.caption(
+        "Il credito è 'fotografato' dall'estratto conto (posizione a "
+        "sofferenza): niente generazione di rate. Riproduce il metodo dei "
+        "conteggi professionali e permette la versione da contestazione."
+    )
+
+    st.markdown("#### 💶 Voci cristallizzate (dall'estratto conto)")
+    c1, c2 = st.columns(2)
+    sorte = c1.number_input(
+        "Sorte capitale (€)", min_value=0.0, value=95059.96, step=1000.0,
+        help="Capitale puro residuo, epurato da interessi.")
+    quota_int = c2.number_input(
+        "Quota interessi rate insolute / rateo (€)", min_value=0.0,
+        value=12163.06, step=100.0,
+        help="Interessi contenuti nelle rate insolute, congelati alla "
+             "sofferenza (voce chirografaria).")
+    c3, c4 = st.columns(2)
+    ante_soff = c3.number_input(
+        "Interessi ante sofferenza (€)", min_value=0.0, value=1511.36,
+        step=100.0, help="Interessi maturati prima della sofferenza "
+        "(voce chirografaria congelata).")
+    spese = c4.number_input(
+        "Spese come da precetto (€)", min_value=0.0, value=1442.08,
+        step=100.0, help="Grado ipotecario ex art. 2855 c.c.")
+
+    st.markdown("#### 📅 Date")
+    d1, d2 = st.columns(2)
+    data_decorrenza = d1.date_input(
+        "Decorrenza interessi", value=date(2021, 11, 1), format="DD/MM/YYYY",
+        help="Inizio del calcolo interessi (di norma il giorno dopo la fine "
+             "dell'estratto conto).")
+    data_precetto = d2.date_input(
+        "Data conteggio precetto (cambio tasso)", value=date(2025, 10, 4),
+        format="DD/MM/YYYY",
+        help="Fino a questa data si applica il tasso legale; da qui in poi "
+             "il convenzionale.")
+    d3, d4 = st.columns(2)
+    data_pign = d3.date_input(
+        "Data pignoramento", value=date(2026, 2, 2), format="DD/MM/YYYY",
+        help="Determina l'annata del triennio (anno solare).")
+    data_agg = d4.date_input(
+        "Data aggiudicazione (fine conteggio)", value=date(2026, 12, 31),
+        format="DD/MM/YYYY")
+
+    st.markdown("#### 📊 Tassi e opzioni di calcolo")
+    t1, t2 = st.columns(2)
+    tasso_conv = t1.number_input(
+        "Tasso convenzionale (%)", min_value=0.0, value=5.55, step=0.05,
+        help="TAN del mutuo, applicato dal precetto in poi.") / 100
+    tasso_mora_v = t2.number_input(
+        "Tasso di mora (%)", min_value=0.0, value=7.55, step=0.05,
+        help="TAN + spread. Usato solo se scegli la mora sul triennio.") / 100
+
+    o1, o2 = st.columns(2)
+    base_lbl = o1.radio(
+        "Base degli interessi legali",
+        options=["Capitale + interessi (prassi conteggi)",
+                 "Solo capitale (contestazione, no anatocismo)"],
+        index=0,
+        help="I conteggi reali girano il legale su capitale + interessi "
+             "scaduti (anatocismo). La versione 'solo capitale' è quella "
+             "difendibile in opposizione.")
+    base_legale = (BASE_CAPITALE_INTERESSI if base_lbl.startswith("Capitale +")
+                   else BASE_SOLO_CAPITALE)
+
+    tasso_tri_lbl = o2.radio(
+        "Tasso del triennio (fino al precetto)",
+        options=["Legale (come i conteggi reali)",
+                 "Convenzionale", "Mora"],
+        index=0,
+        help="Nel triennio ex art. 2855 la norma consentirebbe il tasso "
+             "pattuito; i conteggi reali usano il legale (prudente).")
+    tasso_triennio = (TASSO_TRIENNIO_LEGALE if tasso_tri_lbl.startswith("Legale")
+                      else (TASSO_TRIENNIO_CONVENZIONALE
+                            if tasso_tri_lbl.startswith("Conv")
+                            else TASSO_TRIENNIO_MORA))
+
+    anno_civile = st.checkbox(
+        "Anno civile (366 nei bisestili)", value=True,
+        help="I conteggi reali usano l'anno civile (366 per il 2024). "
+             "Togli la spunta per il divisore fisso 365.")
+
+    st.divider()
+    if st.button("🧮 Calcola credito", type="primary"):
+        st.session_state["mostra_sofferenza"] = True
+
+    if not st.session_state.get("mostra_sofferenza"):
+        return
+
+    if not (data_decorrenza < data_precetto <= data_agg):
+        st.error("⛔ Verifica le date: devono essere decorrenza < precetto ≤ aggiudicazione.")
+        return
+
+    r = calcola_credito_sofferenza(
+        sorte_capitale=sorte, quota_interessi_congelata=quota_int,
+        interessi_ante_sofferenza=ante_soff, spese=spese,
+        data_decorrenza=data_decorrenza, data_precetto=data_precetto,
+        data_pignoramento=data_pign, data_aggiudicazione=data_agg,
+        tasso_convenzionale=tasso_conv, tasso_mora=tasso_mora_v,
+        base_legale=base_legale, tasso_triennio=tasso_triennio,
+        anno_civile=anno_civile,
+    )
+    ipo, chiro = r["ipotecario"], r["chirografario"]
+
+    with st.container(border=True):
+        m1, m2, m3 = st.columns(3)
+        m1.metric("🏛️ Credito IPOTECARIO", fmt_eur(ipo["totale"]))
+        m2.metric("📄 Credito CHIROGRAFARIO", fmt_eur(chiro["totale"]))
+        m3.metric("💰 TOTALE credito", fmt_eur(r["totale_credito"]))
+    st.caption(f"Triennio (anno solare): dal **{r['inizio_triennio'].strftime('%d/%m/%Y')}** "
+               f"(annata del pignoramento + 2 precedenti).")
+
+    fig = go.Figure(go.Pie(
+        labels=["Ipotecario", "Chirografario"],
+        values=[ipo["totale"], chiro["totale"]], hole=0.62, sort=False,
+        marker=dict(colors=[_ORO, _BLU], line=dict(color=_NAVY, width=2)),
+        textinfo="percent", textfont=dict(color="#FFFFFF", size=15),
+        hovertemplate="%{label}: %{value:,.0f} €<extra></extra>",
+    ))
+    fig.update_layout(
+        separators=",.", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", font=dict(color=_CREMA),
+        height=280, margin=dict(l=10, r=10, t=20, b=10),
+        legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"),
+        annotations=[dict(text=f"<b>{fmt_eur(r['totale_credito'], 0)}</b>",
+                          x=0.5, y=0.5, showarrow=False,
+                          font=dict(size=14, color=_CREMA))],
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    with st.expander("🔍 Dettaglio delle voci", expanded=True):
+        righe = ["| Voce | Grado | Importo |", "|:--|:--:|--:|"]
+        righe.append(f"| Spese come da precetto | 🏛️ ipo | {fmt_eur(ipo['spese'])} |")
+        righe.append(f"| Sorte capitale | 🏛️ ipo | {fmt_eur(ipo['sorte'])} |")
+        for p in r["periodi"]:
+            ico = "🏛️ ipo" if p["grado"] == "ipotecario" else "📄 chiro"
+            righe.append(
+                f"| {p['nome']} · {p['da'].strftime('%d/%m/%y')}→"
+                f"{p['a'].strftime('%d/%m/%y')} ({p['tasso_desc']}) | {ico} "
+                f"| {fmt_eur(p['importo'])} |")
+        righe.append(f"| Quota interessi rate insolute (congelata) | 📄 chiro "
+                     f"| {fmt_eur(chiro['quota_interessi_congelata'])} |")
+        righe.append(f"| Interessi ante sofferenza (congelata) | 📄 chiro "
+                     f"| {fmt_eur(chiro['interessi_ante_sofferenza'])} |")
+        righe.append(f"| **TOTALE** | | **{fmt_eur(r['totale_credito'])}** |")
+        st.markdown("\n".join(righe))
+
+    ca = r["confronto_anatocismo"]
+    if ca["extra"] > 0.01:
+        st.warning(
+            f"⚖️ **Punto di contestazione — anatocismo (art. 1283 c.c.):** "
+            f"gli interessi legali sono calcolati sulla base "
+            f"**capitale + interessi scaduti** ({fmt_eur(ca['legale_capitale_interessi'])}). "
+            f"Sulla sola **quota capitale** sarebbero "
+            f"{fmt_eur(ca['legale_solo_capitale'])}: differenza contestabile "
+            f"di **{fmt_eur(ca['extra'])}**. Seleziona *'Solo capitale'* per "
+            f"la versione da opposizione."
+        )
+    else:
+        st.success(
+            "✅ Base *solo capitale* attiva: nessun anatocismo sugli interessi "
+            "legali (versione da contestazione)."
         )
