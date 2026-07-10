@@ -1,0 +1,25 @@
+# Blueprint Render: descrive il servizio web dell'app MORA.
+# Render lo legge quando colleghi il repository e crea tutto da solo.
+#
+# Dopo il primo deploy vanno impostate a mano (dashboard Render → Environment)
+# le due variabili marcate "sync: false", che sono segrete e NON stanno nel
+# repository.
+
+services:
+  - type: web
+    name: mora-resolve
+    runtime: docker
+    region: frankfurt          # datacenter europeo: più vicino all'Italia
+    plan: free                 # → passa a "starter" per togliere lo spegnimento
+    branch: main               # ogni push su main ridistribuisce l'app
+    autoDeploy: true
+    healthCheckPath: /_stcore/health   # endpoint di salute di Streamlit
+    envVars:
+      # Password unica di accesso all'app. Se NON la imposti, l'app resta
+      # ad accesso libero (comportamento storico).
+      - key: APP_PASSWORD
+        sync: false
+      # Opzionale: abilita l'autofill dei PDF tramite Claude.
+      # Senza questa chiave l'autofill usa il fallback regex.
+      - key: ANTHROPIC_API_KEY
+        sync: false
