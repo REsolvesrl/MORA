@@ -1,5 +1,7 @@
 import hmac
+import json
 import os
+import re
 import streamlit as st
 from datetime import date
 
@@ -23,6 +25,15 @@ if "autofill_pending" in st.session_state:
         st.session_state[widget_key] = valore
         campi_compilati.append(ETICHETTE_CAMPI.get(widget_key, widget_key))
     st.session_state["autofill_ultimi_campi"] = campi_compilati
+
+# --- Applica un prospetto caricato PRIMA che i widget siano renderizzati ---
+# (stesso meccanismo dell'autofill: i valori vanno in session_state e i
+# widget con la stessa key li raccolgono alla creazione)
+if "prospetto_pending" in st.session_state:
+    _dati_prospetto = st.session_state.pop("prospetto_pending")
+    for _k, _v in _dati_prospetto.items():
+        st.session_state[_k] = _v
+    st.session_state["prospetto_caricato_n"] = len(_dati_prospetto)
 
 
 # ==========================================================
@@ -288,6 +299,72 @@ with st.sidebar:
             + "\n".join(f"- {c}" for c in campi)
             + "\n\nVerifica i valori e correggi manualmente se necessario."
         )
+
+    # ==========================================================
+    # 💾 PROSPETTI DI CALCOLO — salva/carica tutti i campi compilati
+    # ==========================================================
+    # Vengono salvati i valori dei widget con chiave nota (sidebar sb_*,
+    # Tab 1 t1_* e soff_*, Tab 2 t2_*). Le date sono serializzate in ISO.
+    _PREFISSI_PROSPETTO = ("sb_", "t1_", "t2_", "soff_")
+    _RE_DATA_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+    with st.expander("💾 Prospetto di calcolo (salva / carica)", expanded=False):
+        st.caption(
+            "**Salva** scarica un file `.json` con tutti i campi compilati "
+            "(voci, date, tassi, opzioni di tutti i tab). **Carica** lo "
+            "ripristina: non dovrai ricompilare nulla. Un file per pratica "
+            "(es. `capece.json`, `martinelli.json`)."
+        )
+        _campi_prospetto = {}
+        for _k in list(st.session_state.keys()):
+            if not (isinstance(_k, str) and _k.startswith(_PREFISSI_PROSPETTO)):
+                continue
+            _v = st.session_state[_k]
+            if isinstance(_v, date):
+                _campi_prospetto[_k] = _v.isoformat()
+            elif isinstance(_v, (str, int, float, bool)):
+                _campi_prospetto[_k] = _v
+        st.download_button(
+            "💾 Salva prospetto (.json)",
+            data=json.dumps(
+                {"_salvato_il": date.today().isoformat(), **_campi_prospetto},
+                ensure_ascii=False, indent=2,
+            ),
+            file_name=f"prospetto_MORA_{date.today().strftime('%Y-%m-%d')}.json",
+            mime="application/json",
+            disabled=not _campi_prospetto,
+            help="Contiene solo i dati inseriti nei campi (nessuna password).",
+        )
+
+        _file_prospetto = st.file_uploader(
+            "Carica un prospetto salvato", type=["json"],
+            key="prospetto_uploader",
+        )
+        if _file_prospetto is not None and st.button("📂 Applica il prospetto"):
+            try:
+                _caricato = json.loads(_file_prospetto.getvalue().decode("utf-8"))
+                _pend = {}
+                for _k, _v in _caricato.items():
+                    if not (isinstance(_k, str)
+                            and _k.startswith(_PREFISSI_PROSPETTO)):
+                        continue
+                    if isinstance(_v, str) and _RE_DATA_ISO.match(_v):
+                        _v = date.fromisoformat(_v)
+                    _pend[_k] = _v
+                if not _pend:
+                    st.warning("⚠️ Il file non contiene campi riconoscibili.")
+                else:
+                    st.session_state["prospetto_pending"] = _pend
+                    st.rerun()
+            except Exception as e:
+                st.error(f"⛔ File non valido: {e}")
+
+        if "prospetto_caricato_n" in st.session_state:
+            _n = st.session_state.pop("prospetto_caricato_n")
+            st.success(
+                f"✅ Prospetto applicato: **{_n} campi** ripristinati. "
+                f"Ricorda di premere di nuovo **Calcola** nei tab."
+            )
 
     st.header("Parametri generali")
     tasso_mora = st.number_input(

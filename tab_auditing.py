@@ -1234,20 +1234,29 @@ def _render_sofferenza(ctx):
     c1, c2 = st.columns(2)
     sorte = c1.number_input(
         "Sorte capitale (€)", min_value=0.0, value=95059.96, step=1000.0,
+        key="soff_sorte",
         help="Capitale puro residuo, epurato da interessi.")
     quota_int = c2.number_input(
         "Quota interessi rate insolute / rateo (€)", min_value=0.0,
-        value=12163.06, step=100.0,
+        value=12163.06, step=100.0, key="soff_quota_int",
         help="Interessi contenuti nelle rate insolute, congelati alla "
              "sofferenza (voce chirografaria).")
     c3, c4 = st.columns(2)
     ante_soff = c3.number_input(
         "Interessi ante sofferenza (€)", min_value=0.0, value=1511.36,
-        step=100.0, help="Interessi maturati prima della sofferenza "
+        step=100.0, key="soff_ante_soff",
+        help="Interessi maturati prima della sofferenza "
         "(voce chirografaria congelata).")
     spese = c4.number_input(
         "Spese come da precetto (€)", min_value=0.0, value=1442.08,
-        step=100.0, help="Grado ipotecario ex art. 2855 c.c.")
+        step=100.0, key="soff_spese",
+        help="Grado ipotecario ex art. 2855 c.c.")
+    gbv_dich = st.number_input(
+        "GBV dichiarato dalla cedente (€, opzionale)", min_value=0.0,
+        value=0.0, step=1000.0, key="soff_gbv",
+        help="La pretesa complessiva della cedente (es. dal suo conteggio). "
+             "Se inserito, viene usato nel Tab 3 (Acquisto NPL) come GBV di "
+             "partenza e confrontato col credito ricalcolato qui.")
 
     st.markdown("#### 📅 Date")
     # Pignoramento e aggiudicazione vengono dalla SIDEBAR (unica fonte,
@@ -1262,11 +1271,12 @@ def _render_sofferenza(ctx):
     d1, d2 = st.columns(2)
     data_decorrenza = d1.date_input(
         "Decorrenza interessi", value=date(2021, 11, 1), format="DD/MM/YYYY",
+        key="soff_data_decorrenza",
         help="Inizio del calcolo interessi (di norma il giorno dopo la fine "
              "dell'estratto conto).")
     data_precetto = d2.date_input(
         "Data conteggio precetto (cambio tasso)", value=date(2025, 10, 4),
-        format="DD/MM/YYYY",
+        format="DD/MM/YYYY", key="soff_data_precetto",
         help="Fino a questa data si applica il tasso legale; da qui in poi "
              "il convenzionale.")
 
@@ -1288,7 +1298,7 @@ def _render_sofferenza(ctx):
     tasso_pre_lbl = o1.radio(
         "Tasso PRIMA del precetto (pre-triennio + triennio)",
         options=["Legale (come i conteggi reali)", "Convenzionale", "Mora"],
-        index=0,
+        index=0, key="soff_tasso_pre",
         help="Si applica sia al pre-triennio (chirografo) sia al triennio "
              "fino al precetto. I conteggi reali usano il legale.")
     tasso_pre = (TASSO_TRIENNIO_LEGALE if tasso_pre_lbl.startswith("Legale")
@@ -1298,7 +1308,7 @@ def _render_sofferenza(ctx):
     tasso_post_lbl = o2.radio(
         "Tasso DOPO il precetto (triennio finale)",
         options=["Convenzionale (come i conteggi reali)", "Mora"],
-        index=0,
+        index=0, key="soff_tasso_post",
         help="Si applica dal precetto all'aggiudicazione. I conteggi reali "
              "usano il convenzionale; la mora è la variante 'aggressiva'.")
     tasso_post = (TASSO_TRIENNIO_CONVENZIONALE
@@ -1308,7 +1318,7 @@ def _render_sofferenza(ctx):
         "Base degli interessi legali",
         options=["Capitale + interessi (prassi conteggi)",
                  "Solo capitale (contestazione, no anatocismo)"],
-        index=0,
+        index=0, key="soff_base_legale",
         help="I conteggi reali girano il legale su capitale + interessi "
              "scaduti (anatocismo). La versione 'solo capitale' è quella "
              "difendibile in opposizione.")
@@ -1338,6 +1348,11 @@ def _render_sofferenza(ctx):
     )
     ipo, chiro = r["ipotecario"], r["chirografario"]
 
+    # Condivisione con gli altri tab (status bar + Tab 3 Acquisto NPL):
+    # stessi contratti della modalità Rate insolute.
+    st.session_state["debito_totale"] = r["totale_credito"]
+    st.session_state["gbv_dichiarato"] = gbv_dich
+
     # === Metriche principali ===
     with st.container(border=True):
         m1, m2, m3 = st.columns(3)
@@ -1346,6 +1361,14 @@ def _render_sofferenza(ctx):
         m3.metric("💰 TOTALE credito", fmt_eur(r["totale_credito"]))
     st.caption(f"Triennio (anno solare): dal **{r['inizio_triennio'].strftime('%d/%m/%Y')}** "
                f"(annata del pignoramento + 2 precedenti).")
+    if gbv_dich > 0:
+        delta_gbv = gbv_dich - r["totale_credito"]
+        st.caption(
+            f"📑 **Check GBV:** dichiarato dalla cedente {fmt_eur(gbv_dich)} vs "
+            f"ricalcolato {fmt_eur(r['totale_credito'])} → scarto "
+            f"**{fmt_eur(delta_gbv)}** "
+            f"({'la pretesa supera il ricalcolo' if delta_gbv > 0 else 'il ricalcolo supera la pretesa'})."
+        )
 
     # === Divisione ex Art. 2855 c.c.: donut + barra + box ===
     st.divider()

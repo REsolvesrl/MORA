@@ -26,12 +26,14 @@ def render(ctx):
         "Tipo di procedura",
         options=["Pignoramento Immobiliare", "Pignoramento Mobiliare", "Pignoramento Presso Terzi"],
         index=0,
+        key="t2_tipo_procedura",
     )
     valore_bene = p2.number_input(
         "Valore stimato dell'immobile / bene (€)",
         min_value=0.0,
         value=120000.0,
         step=5000.0,
+        key="t2_valore_bene",
         help="Valore di mercato/perizia. Per l'immobiliare incide sul compenso "
              "del custode/delegato (maggiore tra forfait e 3%)."
     )
@@ -51,24 +53,24 @@ def render(ctx):
         spese_vive_val = r1.number_input(
             "Spese vive (CU = Contributo Unificato, trascrizioni, ecc.)",
             min_value=0.0, value=float(SPESE_IMMOBILIARE["spese_vive"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_spese_vive"
         )
         ctu_val = r2.number_input(
             "CTU (perizia di stima)",
             min_value=0.0, value=float(SPESE_IMMOBILIARE["ctu"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_ctu"
         )
 
         pubblicita_val = st.number_input(
             "Pubblicità asta (PVP)",
             min_value=0.0, value=float(SPESE_IMMOBILIARE["pubblicita"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_pubblicita"
         )
 
         spese_legali_nostre_val = st.number_input(
             "Nostre spese legali",
             min_value=0.0, value=float(SPESE_IMMOBILIARE["spese_legali_nostre"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_legali_nostre"
         )
 
         # ============================================================
@@ -195,19 +197,19 @@ def render(ctx):
         spese_vive_val = r1.number_input(
             "Spese vive (notifica, bolli)",
             min_value=0.0, value=float(SPESE_MOBILIARE["spese_vive"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_spese_vive_mob"
         )
         uff_legali_val = r2.number_input(
             "Ufficiale Giudiziario / Legali",
             min_value=0.0, value=float(SPESE_MOBILIARE["ufficiale_legali"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_uff_legali"
         )
 
         r3, r4 = st.columns(2)
         spese_legali_nostre_val = r3.number_input(
             "Nostre spese legali",
             min_value=0.0, value=float(SPESE_MOBILIARE["spese_legali_nostre"]),
-            step=50.0, format="%.2f"
+            step=50.0, format="%.2f", key="t2_legali_nostre_mob"
         )
         r4.markdown("&nbsp;")
 
